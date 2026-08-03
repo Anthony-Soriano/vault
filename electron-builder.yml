@@ -1,0 +1,19 @@
+appId: com.orbit.vault
+productName: Orbit Vault
+copyright: Copyright © 2026 Orbit Vault
+directories:
+  output: release
+  buildResources: apps/vault-desktop/assets
+files:
+  - apps/vault-desktop/dist/**/*
+  - apps/vault-desktop/package.json
+asar: true
+win:
+  target:
+    - nsis
+  artifactName: Orbit-Vault-${version}-Setup.${ext}
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true

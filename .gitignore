@@ -1,0 +1,88 @@
+# Dependencies and package-manager caches
+node_modules/
+.pnpm-store/
+.pnp
+.pnp.*
+.yarn/cache/
+.yarn/install-state.gz
+
+# Electron, Vite, TypeScript, and test outputs
+dist/
+apps/**/dist/
+release/
+release-*/
+out/
+coverage/
+.vite/
+.vite-temp/
+*.tsbuildinfo
+*.blockmap
+
+# Packaged applications and installers
+*.exe
+*.msi
+*.msix
+*.appx
+*.dmg
+*.pkg
+*.AppImage
+*.deb
+*.rpm
+*.zip
+
+# Local Electron runtimes and packaging recovery artifacts
+.runtime/
+electron-builder-cache/
+packaging-recovery-*.log
+*.asar.unpacked/
+
+# Local Vaults, databases, indexes, and runtime state
+vault/
+vaults/
+dev-vaults/
+development-vaults/
+test-vaults/
+.orbit-vault/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite-journal
+*.db-shm
+*.db-wal
+
+# Logs, crash reports, and temporary files
+*.log
+logs/
+crash-reports/
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*.pid
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.pfx
+
+# Editor and operating-system metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/
+*.code-workspace
+
+# Other framework and service caches
+.next/
+.vinext/
+.vercel/
+.wrangler/
+.turbo/
+.cache/
+outputs/
+work/

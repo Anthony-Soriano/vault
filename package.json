@@ -1,0 +1,38 @@
+{
+  "name": "orbit-vault",
+  "version": "0.1.3",
+  "private": true,
+  "description": "A local-first AI knowledge system for projects.",
+  "author": "Orbit Vault",
+  "main": "apps/vault-desktop/dist/electron/main/main.js",
+  "type": "module",
+  "packageManager": "pnpm@11.9.0",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "workspaces": [
+    "apps/*",
+    "apps/*/renderer",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "pnpm desktop:dev",
+    "desktop:dev": "pnpm desktop:electron:build && concurrently -k -n renderer,desktop -c cyan,magenta \"pnpm --filter @orbit/vault-renderer dev\" \"wait-on http-get://127.0.0.1:5173 && cross-env ORBIT_RENDERER_URL=http://127.0.0.1:5173 electron apps/vault-desktop\"",
+    "desktop:electron:build": "vite build --config apps/vault-desktop/electron/vite.main.config.ts && vite build --config apps/vault-desktop/electron/vite.preload.config.ts",
+    "desktop:renderer:build": "pnpm --filter @orbit/vault-renderer build",
+    "build": "pnpm desktop:electron:build && pnpm desktop:renderer:build",
+    "package": "pnpm build && electron-builder --config electron-builder.yml",
+    "package:dir": "pnpm build && electron-builder --dir --config electron-builder.yml",
+    "typecheck": "tsc -p apps/vault-desktop/electron/tsconfig.json --noEmit && pnpm --filter @orbit/vault-renderer typecheck"
+    ,"test": "node --experimental-strip-types --test tests/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.19",
+    "concurrently": "^9.2.1",
+    "cross-env": "^10.1.0",
+    "electron": "^39.2.7",
+    "electron-builder": "^26.0.12",
+    "typescript": "^5.9.3",
+    "wait-on": "^9.0.3"
+  }
+}

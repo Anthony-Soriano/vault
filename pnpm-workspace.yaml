@@ -1,0 +1,11 @@
+packages:
+  - "apps/*"
+  - "apps/*/renderer"
+  - "packages/*"
+
+onlyBuiltDependencies:
+  - electron
+  - electron-winstaller
+allowBuilds:
+  electron: true
+  electron-winstaller: true
