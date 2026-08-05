@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type {
   ApiResult,
   EvidenceSource,
@@ -51,6 +52,8 @@ type LifecycleModal = { kind: "supersede"; sourceId: string } | { kind: "merge";
 
 const uniqueKnowledge = (items: KnowledgeObject[]) => [...new Map(items.map(item => [item.id, item])).values()];
 const sameIds = (left: string[], right: string[]) => left.length === right.length && left.every((id, index) => id === right[index]);
+const sameIdSet = (left: string[], right: string[]) => sameIds([...left].sort(), [...right].sort());
+const focusableSelector = "button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex='-1'])";
 
 export default function KnowledgeView({ snapshot, project, selectedId, onSelected, onChanged, onError, onOpenDocument }: Props) {
   const [mode, setMode] = useState<KnowledgeMode>("active");
@@ -64,7 +67,7 @@ export default function KnowledgeView({ snapshot, project, selectedId, onSelecte
   const [type, setType] = useState<KnowledgeType>("fact");
   const [confidence, setConfidence] = useState<KnowledgeConfidence>("medium");
   const [parentFolderId, setParentFolderId] = useState<string | null>(null);
-  const [evidence, setEvidence] = useState<EvidenceSource[]>([]);
+  const [evidenceState, setEvidenceState] = useState<{ knowledgeObjectId: string | null; items: EvidenceSource[] }>({ knowledgeObjectId: null, items: [] });
   const [sourceId, setSourceId] = useState("");
   const [excerpt, setExcerpt] = useState("");
   const [locator, setLocator] = useState("");
@@ -72,28 +75,56 @@ export default function KnowledgeView({ snapshot, project, selectedId, onSelecte
   const [relationshipTarget, setRelationshipTarget] = useState("");
   const [historyRecords, setHistoryRecords] = useState<KnowledgeHistoryRecord[]>([]);
   const [recordHistoryLoading, setRecordHistoryLoading] = useState(false);
+  const historicalRequest = useRef(0);
+  const projectIdRef = useRef<string | null>(project?.id ?? null);
+  const evidenceRequest = useRef(0);
   const historyRequest = useRef(0);
+  const dialogRef = useRef<HTMLFormElement | null>(null);
+  const modalTriggerRef = useRef<HTMLElement | null>(null);
   const [modal, setModal] = useState<LifecycleModal>(null);
   const [lifecyclePending, setLifecyclePending] = useState<LifecyclePending>(null);
+  const lifecyclePendingRef = useRef<LifecyclePending>(null);
   const [supersedeReplacementId, setSupersedeReplacementId] = useState("");
   const [supersedeReason, setSupersedeReason] = useState("");
   const [mergeSourceIds, setMergeSourceIds] = useState<string[]>([]);
   const [mergeReason, setMergeReason] = useState("");
   const [mergePreview, setMergePreview] = useState<MergeKnowledgePreview | null>(null);
   const [mergePreviewInput, setMergePreviewInput] = useState<MergeKnowledgeInput | null>(null);
+  const [mergePreviewSnapshotKey, setMergePreviewSnapshotKey] = useState<string | null>(null);
+  lifecyclePendingRef.current = lifecyclePending;
 
   const activeKnowledge = useMemo(
     () => snapshot.knowledgeObjects.filter(item => item.projectId === project?.id && (item.status === "draft" || item.status === "approved")),
     [snapshot, project],
   );
-  const allKnowledge = useMemo(() => uniqueKnowledge([...activeKnowledge, ...historicalKnowledge]), [activeKnowledge, historicalKnowledge]);
+  projectIdRef.current = project?.id ?? null;
+  const allKnowledge = useMemo(() => uniqueKnowledge([...activeKnowledge, ...historicalKnowledge.filter(item => item.projectId === project?.id)]), [activeKnowledge, historicalKnowledge, project?.id]);
   const selected = allKnowledge.find(item => item.id === selectedId) ?? null;
+  const selectedKnowledgeIdRef = useRef<string | null>(selected?.id ?? null);
+  selectedKnowledgeIdRef.current = selected?.id ?? null;
+  const evidence = selected && evidenceState.knowledgeObjectId === selected.id ? evidenceState.items : [];
   const activeCandidates = activeKnowledge.filter(item => item.status === "draft" || item.status === "approved");
+  const mergeSnapshotKey = useMemo(() => {
+    if (modal?.kind !== "merge") return null;
+    return [modal.targetId, ...mergeSourceIds]
+      .sort()
+      .map(id => {
+        const item = activeKnowledge.find(candidate => candidate.id === id);
+        return item ? `${item.id}:${item.status}:${item.updatedAt}` : `${id}:missing`;
+      })
+      .join("|");
+  }, [modal, mergeSourceIds, activeKnowledge]);
+  const clearMergePreview = useCallback(() => {
+    setMergePreview(null);
+    setMergePreviewInput(null);
+    setMergePreviewSnapshotKey(null);
+  }, []);
   const documents = snapshot.documents.filter(item => item.projectId === project?.id && item.status === "active");
   const folders = snapshot.folders.filter(item => item.projectId === project?.id && item.status === "active");
   const relationships = snapshot.relationships.filter(item => item.projectId === project?.id && (item.sourceId === selectedId || item.targetId === selectedId));
 
   const loadHistoricalKnowledge = useCallback(async (projectId: string) => {
+    const requestId = ++historicalRequest.current;
     setHistoricalLoading(true);
     try {
       const [archived, superseded] = await Promise.all([
@@ -101,13 +132,31 @@ export default function KnowledgeView({ snapshot, project, selectedId, onSelecte
         window.vault.knowledge.list({ projectId, status: "superseded" }),
       ]);
       const loaded = uniqueKnowledge([...unwrap(archived), ...unwrap(superseded)]);
-      setHistoricalKnowledge(loaded);
-      return loaded;
+      const scoped = loaded.filter(item => item.projectId === projectId);
+      const isCurrent = historicalRequest.current === requestId && projectIdRef.current === projectId;
+      if (isCurrent) setHistoricalKnowledge(scoped);
+      return isCurrent ? scoped : null;
     } catch (reason) {
-      onError(reason);
+      if (historicalRequest.current === requestId && projectIdRef.current === projectId) onError(reason);
       return null;
     } finally {
-      setHistoricalLoading(false);
+      if (historicalRequest.current === requestId && projectIdRef.current === projectId) setHistoricalLoading(false);
+    }
+  }, [onError]);
+
+  const reloadEvidence = useCallback(async (knowledgeObjectId: string) => {
+    if (selectedKnowledgeIdRef.current !== knowledgeObjectId) return null;
+    const requestId = ++evidenceRequest.current;
+    setEvidenceState({ knowledgeObjectId: null, items: [] });
+    try {
+      const items = unwrap(await window.vault.evidence.list(knowledgeObjectId));
+      if (evidenceRequest.current === requestId && selectedKnowledgeIdRef.current === knowledgeObjectId) {
+        setEvidenceState({ knowledgeObjectId, items });
+      }
+      return items;
+    } catch (reason) {
+      if (evidenceRequest.current === requestId && selectedKnowledgeIdRef.current === knowledgeObjectId) onError(reason);
+      return null;
     }
   }, [onError]);
 
@@ -127,10 +176,14 @@ export default function KnowledgeView({ snapshot, project, selectedId, onSelecte
   }, [onError]);
 
   useEffect(() => {
+    historicalRequest.current += 1;
+    setHistoricalLoading(false);
     setHistoricalKnowledge([]);
     setMode("active");
     setQuery("");
     setCreating(false);
+    setModal(null);
+    if (selectedId && !snapshot.knowledgeObjects.some(item => item.id === selectedId && item.projectId === project?.id)) onSelected(null);
   }, [project?.id]);
 
   useEffect(() => {
@@ -163,8 +216,9 @@ export default function KnowledgeView({ snapshot, project, selectedId, onSelecte
   }, [query, mode, project, activeKnowledge, onError]);
 
   useEffect(() => {
+    evidenceRequest.current += 1;
+    setEvidenceState({ knowledgeObjectId: null, items: [] });
     if (!selected) {
-      setEvidence([]);
       setHistoryRecords([]);
       setRecordHistoryLoading(false);
       historyRequest.current += 1;
@@ -175,9 +229,13 @@ export default function KnowledgeView({ snapshot, project, selectedId, onSelecte
     setType(selected.type);
     setConfidence(selected.confidence);
     setParentFolderId(selected.parentFolderId);
-    void window.vault.evidence.list(selected.id).then(value => setEvidence(unwrap(value))).catch(onError);
+    void reloadEvidence(selected.id);
     void reloadHistory(selected.id);
-  }, [selected?.id, selected?.updatedAt, onError, reloadHistory]);
+  }, [selected?.id, selected?.updatedAt, reloadEvidence, reloadHistory]);
+
+  useEffect(() => {
+    if (mergePreviewInput && mergePreviewSnapshotKey !== mergeSnapshotKey) clearMergePreview();
+  }, [mergePreviewInput, mergePreviewSnapshotKey, mergeSnapshotKey, clearMergePreview]);
 
   const historyResults = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -258,7 +316,7 @@ export default function KnowledgeView({ snapshot, project, selectedId, onSelecte
       setLocator("");
       setSourceId("");
       await onChanged();
-      setEvidence(unwrap(await window.vault.evidence.list(selected.id)));
+      await reloadEvidence(selected.id);
     } catch (reason) {
       onError(reason);
     }
@@ -322,24 +380,24 @@ export default function KnowledgeView({ snapshot, project, selectedId, onSelecte
     setSupersedeReason("");
     setMergeSourceIds([]);
     setMergeReason("");
-    setMergePreview(null);
-    setMergePreviewInput(null);
+    clearMergePreview();
   };
   const closeModal = () => {
     if (!lifecyclePending) resetModal();
   };
-  const openSupersede = () => {
+  const openSupersede = (trigger: HTMLElement) => {
     if (!selected || lifecyclePending) return;
+    modalTriggerRef.current = trigger;
     setSupersedeReplacementId("");
     setSupersedeReason("");
     setModal({ kind: "supersede", sourceId: selected.id });
   };
-  const openMerge = () => {
+  const openMerge = (trigger: HTMLElement) => {
     if (!selected || lifecyclePending) return;
+    modalTriggerRef.current = trigger;
     setMergeSourceIds([]);
     setMergeReason("");
-    setMergePreview(null);
-    setMergePreviewInput(null);
+    clearMergePreview();
     setModal({ kind: "merge", targetId: selected.id });
   };
   const submitSupersede = async () => {
@@ -369,24 +427,24 @@ export default function KnowledgeView({ snapshot, project, selectedId, onSelecte
   const toggleMergeSource = (id: string) => {
     if (lifecyclePending) return;
     setMergeSourceIds(ids => ids.includes(id) ? ids.filter(item => item !== id) : [...ids, id]);
-    setMergePreview(null);
-    setMergePreviewInput(null);
+    clearMergePreview();
   };
   const requestMergePreview = async () => {
-    if (!project || modal?.kind !== "merge" || mergeSourceIds.length === 0 || lifecyclePending) return;
+    if (!project || modal?.kind !== "merge" || mergeSourceIds.length === 0 || lifecyclePending || !mergeSnapshotKey) return;
     const input: MergeKnowledgeInput = {
       projectId: project.id,
       targetId: modal.targetId,
       sourceIds: [...mergeSourceIds],
       reason: mergeReason.trim() || null,
     };
+    const snapshotKey = mergeSnapshotKey;
     setLifecyclePending("preview");
-    setMergePreview(null);
-    setMergePreviewInput(null);
+    clearMergePreview();
     try {
       const preview = unwrap(await window.vault.knowledge.previewMerge(input));
       setMergePreview(preview);
       setMergePreviewInput(input);
+      setMergePreviewSnapshotKey(snapshotKey);
     } catch (reason) {
       onError(reason);
     } finally {
@@ -401,6 +459,9 @@ export default function KnowledgeView({ snapshot, project, selectedId, onSelecte
     && mergePreviewInput.projectId === project.id
     && mergePreviewInput.targetId === modal.targetId
     && sameIds(mergePreviewInput.sourceIds, mergeSourceIds)
+    && mergePreview.target.id === mergePreviewInput.targetId
+    && sameIdSet(mergePreview.sources.map(item => item.id), mergePreviewInput.sourceIds)
+    && mergePreviewSnapshotKey === mergeSnapshotKey
     && mergeSourceIds.length > 0
     && mergePreview.blockingErrors.length === 0
     && !lifecyclePending,
@@ -429,13 +490,62 @@ export default function KnowledgeView({ snapshot, project, selectedId, onSelecte
   };
 
   useEffect(() => {
+    const modalObjectExists = modal?.kind === "supersede"
+      ? allKnowledge.some(item => item.id === modal.sourceId)
+      : modal?.kind === "merge"
+        ? activeKnowledge.some(item => item.id === modal.targetId)
+        : true;
+    if (!modalObjectExists) resetModal();
+  }, [modal, allKnowledge, activeKnowledge]);
+
+  useLayoutEffect(() => {
     if (!modal) return;
+    const dialog = dialogRef.current;
+    const appRoot = document.querySelector<HTMLElement>(".vault-app");
+    if (!dialog || !appRoot) return;
+    const previouslyFocused = modalTriggerRef.current ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
+    const wasInert = appRoot.inert;
+    appRoot.inert = true;
+    const focusable = () => [...dialog.querySelectorAll<HTMLElement>(focusableSelector)];
+    (focusable()[0] ?? dialog).focus();
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !lifecyclePending) closeModal();
+      if (event.key === "Escape" && !lifecyclePendingRef.current) {
+        event.preventDefault();
+        resetModal();
+        return;
+      }
+      if (event.key === "Tab") {
+        const controls = focusable();
+        if (controls.length === 0) {
+          event.preventDefault();
+          dialog.focus();
+          return;
+        }
+        const first = controls[0]!;
+        const last = controls.at(-1)!;
+        if (event.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    };
+    const onFocusIn = (event: FocusEvent) => {
+      if (!dialog.contains(event.target as Node)) (focusable()[0] ?? dialog).focus();
     };
     document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [modal, lifecyclePending]);
+    document.addEventListener("focusin", onFocusIn);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("focusin", onFocusIn);
+      appRoot.inert = wasInert;
+      previouslyFocused?.focus();
+      if (!previouslyFocused?.isConnected) document.querySelector<HTMLElement>(".knowledge-search, .knowledge-inspector button")?.focus();
+      modalTriggerRef.current = null;
+    };
+  }, [modal]);
 
   if (!project) return <div className="empty-state"><h2>Select a project</h2><p>Knowledge remains isolated to one project.</p></div>;
 
@@ -445,7 +555,7 @@ export default function KnowledgeView({ snapshot, project, selectedId, onSelecte
   const mergeTarget = modal?.kind === "merge" ? activeCandidates.find(item => item.id === modal.targetId) ?? null : null;
   const mergeSources = activeCandidates.filter(item => item.id !== mergeTarget?.id);
 
-  return <div className="knowledge-layout">
+  return <><div className="knowledge-layout">
     <aside className="knowledge-list">
       <div className="knowledge-heading">
         <div><b>Project Knowledge</b><small>{mode === "active" ? activeKnowledge.length : allKnowledge.length} objects</small></div>
@@ -479,8 +589,8 @@ export default function KnowledgeView({ snapshot, project, selectedId, onSelecte
         <KnowledgeForm title={title} body={body} type={type} confidence={confidence} parentFolderId={parentFolderId} folders={folders} setTitle={setTitle} setBody={setBody} setType={setType} setConfidence={setConfidence} setParentFolderId={setParentFolderId} readOnly={readOnly} />
         <div className="inspector-actions">
           {selected.status === "archived" ? <button className="primary" disabled={Boolean(lifecyclePending)} onClick={() => void restore()}>{lifecyclePending === "restore" ? "Restoring…" : "Restore"}</button> : selected.status !== "superseded" && <>
-            <button className="consequential" disabled={Boolean(lifecyclePending)} onClick={openSupersede}>Supersede</button>
-            <button className="consequential" disabled={Boolean(lifecyclePending) || activeCandidates.length < 2} onClick={openMerge}>Merge knowledge</button>
+            <button className="consequential" disabled={Boolean(lifecyclePending)} onClick={event => openSupersede(event.currentTarget)}>Supersede</button>
+            <button className="consequential" disabled={Boolean(lifecyclePending) || activeCandidates.length < 2} onClick={event => openMerge(event.currentTarget)}>Merge knowledge</button>
             <button disabled={Boolean(lifecyclePending)} onClick={() => void archive()}>{lifecyclePending === "archive" ? "Archiving…" : "Archive"}</button>
             <button disabled={Boolean(lifecyclePending)} onClick={() => void save()}>Save changes</button>
             {selected.status === "draft" && <button className="primary" disabled={Boolean(lifecyclePending) || evidence.length === 0} title={evidence.length === 0 ? "Attach evidence before approval" : ""} onClick={() => void approve()}>{lifecyclePending === "approve" ? "Approving…" : "Approve"}</button>}
@@ -499,9 +609,10 @@ export default function KnowledgeView({ snapshot, project, selectedId, onSelecte
         <KnowledgeHistory records={historyRecords} loading={recordHistoryLoading} />
       </> : <div className="empty-editor"><h2>Knowledge Inspector</h2><p>{mode === "history" ? "Select an active, archived, or superseded object to inspect its audit trail." : "Select an object or create a manual draft."}</p></div>}
     </section>
+  </div>
 
-    {modal?.kind === "supersede" && modalSource && <div className="dialog-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) closeModal(); }}>
-      <form className="lifecycle-modal" role="dialog" aria-modal="true" aria-labelledby="supersede-title" onSubmit={event => { event.preventDefault(); void submitSupersede(); }}>
+    {modal?.kind === "supersede" && modalSource && createPortal(<div className="dialog-backdrop lifecycle-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) closeModal(); }}>
+      <form ref={dialogRef} tabIndex={-1} className="lifecycle-modal" role="dialog" aria-modal="true" aria-labelledby="supersede-title" onSubmit={event => { event.preventDefault(); void submitSupersede(); }}>
         <header><small>Lifecycle action</small><h2 id="supersede-title">Supersede knowledge</h2><p>Remove an outdated object from Active knowledge while preserving its complete audit trail.</p></header>
         <div className="lifecycle-identity"><span className={`knowledge-type ${modalSource.type}`}>{modalSource.type[0].toUpperCase()}</span><div><b>{modalSource.title}</b><small>{modalSource.type} · {modalSource.status}</small></div></div>
         <label>Replacement (optional)<select autoFocus value={supersedeReplacementId} disabled={Boolean(lifecyclePending)} onChange={event => setSupersedeReplacementId(event.target.value)}><option value="">No replacement</option>{activeCandidates.filter(item => item.id !== modalSource.id).map(item => <option value={item.id} key={item.id}>{item.title} · {item.status}</option>)}</select></label>
@@ -509,10 +620,10 @@ export default function KnowledgeView({ snapshot, project, selectedId, onSelecte
         <div className="lifecycle-consequences"><b>What happens</b><ul><li>The source leaves the Active view.</li><li>Evidence and relationships stay attached.</li><li>History remains available from the Knowledge sidebar.</li></ul></div>
         <div className="lifecycle-modal-actions"><button type="button" disabled={Boolean(lifecyclePending)} onClick={closeModal}>Cancel</button><button className="consequential" type="submit" disabled={Boolean(lifecyclePending)}>{lifecyclePending === "supersede" ? "Superseding…" : "Supersede knowledge"}</button></div>
       </form>
-    </div>}
+    </div>, document.body)}
 
-    {modal?.kind === "merge" && mergeTarget && <div className="dialog-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) closeModal(); }}>
-      <form className="lifecycle-modal merge" role="dialog" aria-modal="true" aria-labelledby="merge-title" onSubmit={event => { event.preventDefault(); void submitMerge(); }}>
+    {modal?.kind === "merge" && mergeTarget && createPortal(<div className="dialog-backdrop lifecycle-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) closeModal(); }}>
+      <form ref={dialogRef} tabIndex={-1} className="lifecycle-modal merge" role="dialog" aria-modal="true" aria-labelledby="merge-title" onSubmit={event => { event.preventDefault(); void submitMerge(); }}>
         <header><small>Preview required</small><h2 id="merge-title">Merge knowledge</h2><p>The canonical text stays unchanged. Evidence and relationships move only after you review the merge plan.</p></header>
         <div className="lifecycle-identity"><span className={`knowledge-type ${mergeTarget.type}`}>{mergeTarget.type[0].toUpperCase()}</span><div><small>Canonical target</small><b>{mergeTarget.title}</b><small>{mergeTarget.type} · {mergeTarget.status}</small></div></div>
         <fieldset className="merge-source-list" disabled={Boolean(lifecyclePending)}><legend>Source objects</legend>{mergeSources.map((item, index) => <label key={item.id}><input autoFocus={index === 0} type="checkbox" checked={mergeSourceIds.includes(item.id)} onChange={() => toggleMergeSource(item.id)} /><span><b>{item.title}</b><small>{item.type} · {item.status}</small></span></label>)}{mergeSources.length === 0 && <p>No other active knowledge is available to merge.</p>}</fieldset>
@@ -521,8 +632,8 @@ export default function KnowledgeView({ snapshot, project, selectedId, onSelecte
         {mergePreview && <MergePreviewPanel preview={mergePreview} entityLabel={entityLabel} evidenceLabel={evidenceLabel} />}
         <div className="lifecycle-modal-actions"><button type="button" disabled={Boolean(lifecyclePending)} onClick={closeModal}>Cancel</button><button className="consequential" type="submit" disabled={!canMerge}>{lifecyclePending === "merge" ? "Merging…" : "Merge knowledge"}</button></div>
       </form>
-    </div>}
-  </div>;
+    </div>, document.body)}
+  </>;
 }
 
 type EvidencePanelProps = {

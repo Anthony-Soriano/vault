@@ -90,8 +90,54 @@ assert.match(renderer, /role="dialog"/, "Lifecycle application modal must use ro
 assert.match(renderer, /aria-modal="true"/, "Lifecycle application modal must be aria-modal");
 assert.doesNotMatch(renderer, /window\.confirm/, "Lifecycle actions must not use window.confirm");
 
+const raceGuards = [
+  [/const historicalRequest = useRef\(0\);/, "historical request generation"],
+  [/const projectIdRef = useRef<string \| null>\(project\?\.id \?\? null\);/, "current project identity ref"],
+  [/const requestId = \+\+historicalRequest\.current;/, "historical request token capture"],
+  [/historicalRequest\.current === requestId && projectIdRef\.current === projectId/, "historical commit project/request guard"],
+  [/historicalKnowledge\.filter\(item => item\.projectId === project\?\.id\)/, "defensive historical project filter"],
+  [/historicalRequest\.current \+= 1;/, "historical request invalidation"],
+  [/const evidenceRequest = useRef\(0\);/, "Evidence request generation"],
+  [/const selectedKnowledgeIdRef = useRef<string \| null>\(selected\?\.id \?\? null\);/, "selected Knowledge identity ref"],
+  [/setEvidenceState\(\{ knowledgeObjectId: null, items: \[\] \}\);/, "immediate Evidence clear"],
+  [/evidenceRequest\.current === requestId && selectedKnowledgeIdRef\.current === knowledgeObjectId/, "Evidence commit selection/request guard"],
+  [/const evidence = selected && evidenceState\.knowledgeObjectId === selected\.id \? evidenceState\.items : \[\];/, "selection-owned Evidence gate"],
+];
+
+for (const [pattern, description] of raceGuards) {
+  assert.match(renderer, pattern, `Missing lifecycle UI race guard: ${description}`);
+}
+
+const previewParity = [
+  [/mergePreview\.target\.id === mergePreviewInput\.targetId/, "rendered preview target parity"],
+  [/sameIdSet\(mergePreview\.sources\.map\(item => item\.id\), mergePreviewInput\.sourceIds\)/, "rendered preview source parity"],
+  [/mergePreviewSnapshotKey === mergeSnapshotKey/, "preview snapshot parity"],
+  [/if \(mergePreviewInput && mergePreviewSnapshotKey !== mergeSnapshotKey\) clearMergePreview\(\);/, "preview invalidation on snapshot change"],
+];
+
+for (const [pattern, description] of previewParity) {
+  assert.match(renderer, pattern, `Missing merge preview safety contract: ${description}`);
+}
+
+const modalSafety = [
+  [/import \{ createPortal \} from "react-dom";/, "React body portal"],
+  [/createPortal\([\s\S]*document\.body\)/, "modal rendered at document body"],
+  [/const dialogRef = useRef<HTMLFormElement \| null>\(null\);/, "dialog focus boundary ref"],
+  [/const modalTriggerRef = useRef<HTMLElement \| null>\(null\);/, "modal trigger focus ref"],
+  [/appRoot\.inert = true;/, "background interaction inert"],
+  [/event\.key === "Tab"/, "Tab focus containment"],
+  [/document\.addEventListener\("focusin", onFocusIn\);/, "focus escape containment"],
+  [/previouslyFocused\?\.focus\(\);/, "trigger focus restoration"],
+  [/className="dialog-backdrop lifecycle-backdrop"/, "dedicated top-level modal backdrop"],
+];
+
+for (const [pattern, description] of modalSafety) {
+  assert.match(renderer, pattern, `Missing lifecycle modal safety contract: ${description}`);
+}
+
 for (const selector of [".knowledge-history", ".history-operation", ".lifecycle-modal", ".merge-preview", ".merge-conflicts"]) {
   assert.match(styles, new RegExp(selector.replace(".", "\\.")), `Missing lifecycle UI style: ${selector}`);
 }
+assert.match(styles, /body>\.lifecycle-backdrop\{[^}]*z-index:1000/, "Lifecycle portal backdrop must sit above the application shell");
 
 console.log("Lifecycle IPC/preload/UI regression checks passed.");
