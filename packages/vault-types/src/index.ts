@@ -57,7 +57,7 @@ export interface KnowledgeObject {
   status: KnowledgeStatus;
   confidence: KnowledgeConfidence;
   author: KnowledgeAuthor;
-  supersededById?: string | null;
+  supersededById: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -65,8 +65,6 @@ export interface KnowledgeObject {
 export interface EvidenceSource {
   id: string;
   projectId: string;
-  /** @deprecated Migration 6 replaces ownership with KnowledgeEvidenceLink. */
-  knowledgeObjectId: string;
   sourceType: EvidenceSourceType;
   sourceId: string | null;
   sourcePath: string | null;

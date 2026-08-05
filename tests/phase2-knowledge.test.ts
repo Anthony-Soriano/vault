@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { DatabaseSync } from "node:sqlite";
 import { VaultService } from "@orbit/vault-core";
 import { SqliteVaultRepository } from "@orbit/vault-storage";
 
@@ -12,6 +13,54 @@ const fixture = () => {
   service.initialize();
   return { root, service, dispose: () => { service.close(); rmSync(root, { recursive: true, force: true }); } };
 };
+
+test("migration preserves canonical evidence and creates one honest baseline", () => {
+  const root = mkdtempSync(join(tmpdir(), "orbit-vault-migration-"));
+  const projectId = "project_legacy_001", knowledgeId = "knowledge_legacy_001", evidenceId = "evidence_legacy_001";
+  const createdAt = "2026-08-01T10:00:00.000Z";
+  let service: VaultService | null = null;
+  try {
+    const legacy = new DatabaseSync(join(root, "vault.db"));
+    legacy.exec(`
+      CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
+      CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT, icon TEXT, color TEXT, status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, storage_path TEXT);
+      CREATE TABLE knowledge_objects (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, type TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, status TEXT NOT NULL, confidence TEXT NOT NULL, author TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, parent_folder_id TEXT);
+      CREATE TABLE evidence_sources (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, knowledge_object_id TEXT NOT NULL, source_type TEXT NOT NULL, source_id TEXT, source_path TEXT, excerpt TEXT, locator TEXT, confidence TEXT NOT NULL, availability TEXT NOT NULL, created_at TEXT NOT NULL);
+      CREATE TABLE relationships (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, source_type TEXT NOT NULL, source_id TEXT NOT NULL, target_type TEXT NOT NULL, target_id TEXT NOT NULL, relationship_type TEXT NOT NULL, author TEXT NOT NULL, created_at TEXT NOT NULL);
+    `);
+    for (let version = 1; version <= 5; version++) legacy.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(version, createdAt);
+    legacy.prepare("INSERT INTO projects VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(projectId, "Legacy Project", null, null, null, "active", createdAt, createdAt, `${projectId}/files`);
+    legacy.prepare("INSERT INTO knowledge_objects VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(knowledgeId, projectId, "decision", "Legacy decision", "Preserve provenance.", "approved", "verified", "user", createdAt, createdAt, null);
+    legacy.prepare("INSERT INTO evidence_sources VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(evidenceId, projectId, knowledgeId, "url", "source_legacy_001", "https://example.test/provenance", "Preserve this excerpt.", "section-2", "verified", "available", createdAt);
+    legacy.prepare("INSERT INTO relationships VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run("relationship_in_001", projectId, "document", "document_legacy_001", "knowledge", knowledgeId, "supports", "user", "2026-08-01T10:01:00.000Z");
+    legacy.prepare("INSERT INTO relationships VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run("relationship_out_001", projectId, "knowledge", knowledgeId, "project", projectId, "references", "user", "2026-08-01T10:02:00.000Z");
+    legacy.close();
+
+    service = new VaultService(new SqliteVaultRepository({ vaultRoot: root, developmentMode: false, developmentRoot: root }));
+    service.initialize();
+    const [evidence] = service.evidence.list(knowledgeId);
+    assert.deepEqual(evidence, { id: evidenceId, projectId, sourceType: "url", sourceId: "source_legacy_001", sourcePath: "https://example.test/provenance", excerpt: "Preserve this excerpt.", locator: "section-2", confidence: "verified", availability: "available", createdAt });
+    service.close();
+
+    const migrated = new DatabaseSync(join(root, "vault.db"), { readOnly: true });
+    assert.equal((migrated.prepare("PRAGMA table_info(evidence_sources)").all() as { name: string }[]).some(column => column.name === "knowledge_object_id"), false);
+    assert.deepEqual((migrated.prepare("SELECT knowledge_object_id, evidence_source_id, original_knowledge_object_id FROM knowledge_evidence_links").all() as Record<string, string>[]).map(row => ({ ...row })), [{ knowledge_object_id: knowledgeId, evidence_source_id: evidenceId, original_knowledge_object_id: knowledgeId }]);
+    const baseline = migrated.prepare("SELECT event_type, actor_type, reason, before_snapshot, after_snapshot FROM knowledge_object_history WHERE knowledge_object_id=?").get(knowledgeId) as { event_type: string; actor_type: string; reason: string; before_snapshot: null; after_snapshot: string };
+    assert.equal(baseline.event_type, "baseline_migrated"); assert.equal(baseline.actor_type, "system"); assert.match(baseline.reason, /immutable tracking began.*earlier edits cannot be reconstructed/i); assert.equal(baseline.before_snapshot, null);
+    const after = JSON.parse(baseline.after_snapshot);
+    assert.equal(after.schemaVersion, 1); assert.equal(after.object.supersededById, null);
+    assert.deepEqual(after.evidenceLinks.map((link: { knowledgeObjectId: string; evidenceSourceId: string; originalKnowledgeObjectId: string }) => ({ knowledgeObjectId: link.knowledgeObjectId, evidenceSourceId: link.evidenceSourceId, originalKnowledgeObjectId: link.originalKnowledgeObjectId })), [{ knowledgeObjectId: knowledgeId, evidenceSourceId: evidenceId, originalKnowledgeObjectId: knowledgeId }]);
+    assert.deepEqual(after.incomingRelationships.map((relationship: { id: string }) => relationship.id), ["relationship_in_001"]);
+    assert.deepEqual(after.outgoingRelationships.map((relationship: { id: string }) => relationship.id), ["relationship_out_001"]);
+    migrated.close();
+
+    service.initialize(); service.close();
+    const reopened = new DatabaseSync(join(root, "vault.db"), { readOnly: true });
+    assert.equal((reopened.prepare("SELECT count(*) AS count FROM knowledge_evidence_links").get() as { count: number }).count, 1);
+    assert.equal((reopened.prepare("SELECT count(*) AS count FROM knowledge_object_history").get() as { count: number }).count, 1);
+    reopened.close();
+  } finally { service?.close(); rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
+});
 
 test("manual knowledge remains draft until explicit approval and survives restart", () => {
   const ctx=fixture(); try {

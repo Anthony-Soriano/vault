@@ -2,15 +2,16 @@ import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import type { CreateEvidenceSourceInput, CreateFolderInput, CreateKnowledgeObjectInput, CreateMarkdownInput, CreateProjectInput, CreateRelationshipInput, DocumentFile, EntityStatus, EvidenceSource, Folder, ImportFilesInput, KnowledgeConfidence, KnowledgeFilters, KnowledgeObject, KnowledgeSearchInput, KnowledgeStatus, Project, ProjectFilters, ReconciliationReport, Relationship, RelationshipEndpointType, RelationshipFilters, RelationshipType, SearchInput, SearchResult, UpdateKnowledgeObjectInput, UpdateProjectInput, VaultSnapshot } from "@orbit/vault-types";
+import type { CreateEvidenceSourceInput, CreateFolderInput, CreateKnowledgeObjectInput, CreateMarkdownInput, CreateProjectInput, CreateRelationshipInput, DocumentFile, EntityStatus, EvidenceSource, Folder, ImportFilesInput, KnowledgeConfidence, KnowledgeEvidenceLink, KnowledgeFilters, KnowledgeObject, KnowledgeSearchInput, KnowledgeStatus, Project, ProjectFilters, ReconciliationReport, Relationship, RelationshipEndpointType, RelationshipFilters, RelationshipType, SearchInput, SearchResult, UpdateKnowledgeObjectInput, UpdateProjectInput, VaultSnapshot } from "@orbit/vault-types";
 import { VaultDomainError, type VaultRepository } from "@orbit/vault-core";
 
 type StorageOptions = { vaultRoot: string; developmentMode: boolean; developmentRoot: string };
 type DbRow = Record<string, string | null>;
+type Migration = { version: number; sql?: string; run?: (db: DatabaseSync) => void };
 
 const safeLinkedKind=(path:string,allowedRoot:string):"directory"|"file"|null=>{try{const resolved=realpathSync.native(path),within=relative(realpathSync.native(allowedRoot),resolved);if(within.startsWith(`..${sep}`)||within===".."||isAbsolute(within))return null;const stats=statSync(path);return stats.isDirectory()?"directory":stats.isFile()?"file":null;}catch{return null;}};
 
-const MIGRATIONS = [{
+const MIGRATIONS: Migration[] = [{
   version: 1,
   sql: `
     CREATE TABLE IF NOT EXISTS projects (
@@ -96,7 +97,74 @@ const MIGRATIONS = [{
     UPDATE projects SET storage_path=id || '/files' WHERE storage_path IS NULL;
     CREATE UNIQUE INDEX IF NOT EXISTS projects_storage_path_idx ON projects(storage_path);
   `,
+}, {
+  version: 6,
+  run: migrateEvidenceLinks,
 }];
+
+function migrateEvidenceLinks(db: DatabaseSync) {
+  db.exec(`
+    ALTER TABLE knowledge_objects ADD COLUMN superseded_by_id TEXT;
+    CREATE INDEX knowledge_superseded_by_idx ON knowledge_objects(superseded_by_id);
+    ALTER TABLE evidence_sources RENAME TO evidence_sources_legacy;
+    DROP INDEX IF EXISTS evidence_knowledge_idx;
+    DROP INDEX IF EXISTS evidence_source_idx;
+    CREATE TABLE evidence_sources (
+      id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
+      source_type TEXT NOT NULL CHECK(source_type IN ('document','file','url','conversation','image','pdf','manual_note')),
+      source_id TEXT, source_path TEXT, excerpt TEXT, locator TEXT,
+      confidence TEXT NOT NULL CHECK(confidence IN ('low','medium','high','verified')),
+      availability TEXT NOT NULL CHECK(availability IN ('available','missing')),
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX evidence_source_idx ON evidence_sources(source_type, source_id);
+    CREATE TABLE knowledge_evidence_links (
+      link_id TEXT PRIMARY KEY,
+      knowledge_object_id TEXT NOT NULL REFERENCES knowledge_objects(id),
+      evidence_source_id TEXT NOT NULL REFERENCES evidence_sources(id),
+      original_knowledge_object_id TEXT NOT NULL,
+      operation_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE(knowledge_object_id, evidence_source_id)
+    );
+    CREATE INDEX knowledge_evidence_links_knowledge_idx ON knowledge_evidence_links(knowledge_object_id);
+    CREATE INDEX knowledge_evidence_links_evidence_idx ON knowledge_evidence_links(evidence_source_id);
+  `);
+  const legacyEvidence = db.prepare("SELECT * FROM evidence_sources_legacy ORDER BY id").all() as DbRow[];
+  const insertEvidence = db.prepare("INSERT INTO evidence_sources(id, project_id, source_type, source_id, source_path, excerpt, locator, confidence, availability, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+  const insertLink = db.prepare("INSERT INTO knowledge_evidence_links(link_id, knowledge_object_id, evidence_source_id, original_knowledge_object_id, operation_id, created_at) VALUES (?, ?, ?, ?, ?, ?)");
+  for (const evidence of legacyEvidence) {
+    insertEvidence.run(evidence.id, evidence.project_id, evidence.source_type, evidence.source_id, evidence.source_path, evidence.excerpt, evidence.locator, evidence.confidence, evidence.availability, evidence.created_at);
+    insertLink.run(entityId(), evidence.knowledge_object_id, evidence.id, evidence.knowledge_object_id, `migration6-link-${evidence.id}`, evidence.created_at);
+  }
+  db.exec(`
+    CREATE TABLE knowledge_object_history (
+      history_id TEXT PRIMARY KEY,
+      knowledge_object_id TEXT NOT NULL REFERENCES knowledge_objects(id),
+      operation_id TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      before_snapshot TEXT,
+      after_snapshot TEXT,
+      actor_type TEXT NOT NULL CHECK(actor_type IN ('user','system','ai')),
+      actor_id TEXT,
+      reason TEXT,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX knowledge_object_history_knowledge_idx ON knowledge_object_history(knowledge_object_id);
+    CREATE INDEX knowledge_object_history_operation_idx ON knowledge_object_history(operation_id);
+    CREATE INDEX knowledge_object_history_created_at_idx ON knowledge_object_history(created_at);
+  `);
+  const insertHistory = db.prepare("INSERT INTO knowledge_object_history(history_id, knowledge_object_id, operation_id, event_type, before_snapshot, after_snapshot, actor_type, actor_id, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+  const knowledgeObjects = db.prepare("SELECT * FROM knowledge_objects ORDER BY id").all() as DbRow[];
+  for (const object of knowledgeObjects) {
+    const evidenceLinks = (db.prepare("SELECT * FROM knowledge_evidence_links WHERE knowledge_object_id=? ORDER BY created_at, link_id").all(object.id) as DbRow[]).map(mapKnowledgeEvidenceLink);
+    const incomingRelationships = (db.prepare("SELECT * FROM relationships WHERE target_type='knowledge' AND target_id=? ORDER BY created_at, id").all(object.id) as DbRow[]).map(mapRelationship);
+    const outgoingRelationships = (db.prepare("SELECT * FROM relationships WHERE source_type='knowledge' AND source_id=? ORDER BY created_at, id").all(object.id) as DbRow[]).map(mapRelationship);
+    const afterSnapshot = JSON.stringify({ schemaVersion: 1, object: mapKnowledgeObject(object), evidenceLinks, incomingRelationships, outgoingRelationships });
+    insertHistory.run(entityId(), object.id, `migration6-baseline-${object.id}`, "baseline_migrated", null, afterSnapshot, "system", null, "Immutable tracking began at migration 6; earlier edits cannot be reconstructed.", now());
+  }
+  db.exec("DROP TABLE evidence_sources_legacy;");
+}
 
 export class SqliteVaultRepository implements VaultRepository {
   private database: DatabaseSync | null = null;
@@ -112,7 +180,8 @@ export class SqliteVaultRepository implements VaultRepository {
     this.db.exec("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);");
     const applied = new Set((this.db.prepare("SELECT version FROM schema_migrations").all() as { version: number }[]).map(row => row.version));
     for (const migration of MIGRATIONS) if (!applied.has(migration.version)) this.transaction(() => {
-      this.db.exec(migration.sql);
+      if (migration.sql) this.db.exec(migration.sql);
+      migration.run?.(this.db);
       this.db.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(migration.version, now());
     });
   }
@@ -263,11 +332,15 @@ export class SqliteVaultRepository implements VaultRepository {
     const knowledge=this.getKnowledgeObject(input.knowledgeObjectId); if(knowledge.projectId!==input.projectId)throw invalidMove("Evidence and knowledge must belong to the same project.");
     assertOneOf(input.sourceType,EVIDENCE_TYPES,"evidence source type"); assertOneOf(input.confidence,CONFIDENCE_LEVELS,"confidence");
     if(input.sourceType==="document"||input.sourceType==="file"){if(!input.sourceId)throw new VaultDomainError("VALIDATION_ERROR","Choose a source file.","sourceId");const document=this.getDocument(input.sourceId);if(document.projectId!==input.projectId)throw invalidMove("Evidence cannot reference a file from another project.");if(input.sourceType==="file"&&document.kind!=="file")throw new VaultDomainError("VALIDATION_ERROR","Choose an imported source file.","sourceId");}
-    const id=entityId(), timestamp=now();
-    this.db.prepare("INSERT INTO evidence_sources VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'available', ?)").run(id,input.projectId,input.knowledgeObjectId,input.sourceType,input.sourceId,input.sourcePath,input.excerpt,input.locator,input.confidence,timestamp);
-    return this.listEvidence(input.knowledgeObjectId).find(item=>item.id===id)!;
+    return this.transaction(() => {
+      const id=entityId(), linkId=entityId(), operationId=entityId(), timestamp=now();
+      this.db.prepare("INSERT INTO evidence_sources(id, project_id, source_type, source_id, source_path, excerpt, locator, confidence, availability, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'available', ?)").run(id,input.projectId,input.sourceType,input.sourceId,input.sourcePath,input.excerpt,input.locator,input.confidence,timestamp);
+      this.db.prepare("INSERT INTO knowledge_evidence_links(link_id, knowledge_object_id, evidence_source_id, original_knowledge_object_id, operation_id, created_at) VALUES (?, ?, ?, ?, ?, ?)").run(linkId,input.knowledgeObjectId,id,input.knowledgeObjectId,operationId,timestamp);
+      return this.withEvidenceAvailability(mapEvidenceSource(this.db.prepare("SELECT * FROM evidence_sources WHERE id=?").get(id) as DbRow));
+    });
   }
-  listEvidence(knowledgeObjectId: string) { this.getKnowledgeObject(knowledgeObjectId); return (this.db.prepare("SELECT * FROM evidence_sources WHERE knowledge_object_id=? ORDER BY created_at DESC").all(knowledgeObjectId) as DbRow[]).map(mapEvidenceSource).map(item=>this.withEvidenceAvailability(item)); }
+  listEvidence(knowledgeObjectId: string) { this.getKnowledgeObject(knowledgeObjectId); return (this.db.prepare("SELECT evidence_sources.* FROM evidence_sources JOIN knowledge_evidence_links ON knowledge_evidence_links.evidence_source_id=evidence_sources.id WHERE knowledge_evidence_links.knowledge_object_id=? ORDER BY evidence_sources.created_at DESC").all(knowledgeObjectId) as DbRow[]).map(mapEvidenceSource).map(item=>this.withEvidenceAvailability(item)); }
+  listEvidenceLinks(knowledgeObjectId: string) { this.getKnowledgeObject(knowledgeObjectId); return (this.db.prepare("SELECT * FROM knowledge_evidence_links WHERE knowledge_object_id=? ORDER BY created_at DESC, link_id DESC").all(knowledgeObjectId) as DbRow[]).map(mapKnowledgeEvidenceLink); }
   private withEvidenceAvailability(evidence:EvidenceSource):EvidenceSource{if((evidence.sourceType==="document"||evidence.sourceType==="file")&&evidence.sourceId){try{return{...evidence,availability:this.getDocument(evidence.sourceId).availability};}catch{return{...evidence,availability:"missing"};}}return evidence;}
   createRelationship(input:CreateRelationshipInput){
     assertOneOf(input.sourceType,RELATIONSHIP_ENDPOINT_TYPES,"relationship source type");assertOneOf(input.targetType,RELATIONSHIP_ENDPOINT_TYPES,"relationship target type");assertOneOf(input.relationshipType,RELATIONSHIP_TYPES,"relationship type");
@@ -291,9 +364,12 @@ export class SqliteVaultRepository implements VaultRepository {
     const documents = (this.db.prepare("SELECT * FROM documents WHERE status='active' ORDER BY relative_path").all() as DbRow[]).map(mapDocument).map(item=>this.withAvailability(item)).filter(document => projectIds.has(document.projectId) && (!document.parentFolderId || folderIds.has(document.parentFolderId)));
     const knowledgeObjects=(this.db.prepare("SELECT * FROM knowledge_objects WHERE status<>'archived' ORDER BY updated_at DESC").all() as DbRow[]).map(mapKnowledgeObject).filter(item=>projectIds.has(item.projectId));
     const knowledgeIds=new Set(knowledgeObjects.map(item=>item.id));
-    const evidenceSources=(this.db.prepare("SELECT * FROM evidence_sources ORDER BY created_at DESC").all() as DbRow[]).map(mapEvidenceSource).map(item=>this.withEvidenceAvailability(item)).filter(item=>knowledgeIds.has(item.knowledgeObjectId));
+    const evidenceLinks=(this.db.prepare("SELECT * FROM knowledge_evidence_links ORDER BY created_at DESC, link_id DESC").all() as DbRow[]).map(mapKnowledgeEvidenceLink).filter(link=>knowledgeIds.has(link.knowledgeObjectId));
+    const evidenceIds=new Set(evidenceLinks.map(link=>link.evidenceSourceId));
+    const evidenceSources=(this.db.prepare("SELECT * FROM evidence_sources ORDER BY created_at DESC").all() as DbRow[]).map(mapEvidenceSource).map(item=>this.withEvidenceAvailability(item)).filter(item=>evidenceIds.has(item.id));
     const relationships=(this.db.prepare("SELECT * FROM relationships ORDER BY created_at DESC").all() as DbRow[]).map(mapRelationship).filter(item=>projectIds.has(item.projectId));
-    const firstDocumentEvidence=new Map<string,string>(); for(const evidence of evidenceSources)if(evidence.sourceType==="document"&&evidence.sourceId&&!firstDocumentEvidence.has(evidence.knowledgeObjectId)&&documents.some(item=>item.id===evidence.sourceId))firstDocumentEvidence.set(evidence.knowledgeObjectId,evidence.sourceId);
+    const evidenceById=new Map(evidenceSources.map(evidence=>[evidence.id,evidence]));
+    const firstDocumentEvidence=new Map<string,string>(); for(const link of evidenceLinks){const evidence=evidenceById.get(link.evidenceSourceId);if(evidence?.sourceType==="document"&&evidence.sourceId&&!firstDocumentEvidence.has(link.knowledgeObjectId)&&documents.some(item=>item.id===evidence.sourceId))firstDocumentEvidence.set(link.knowledgeObjectId,evidence.sourceId);}
     const atlasNodes = [
       { id: "vault-root", name: basename(this.options.vaultRoot), type: "vault" as const, parentId: null, projectId: null, path: this.options.vaultRoot },
       ...projects.map(project => ({ id: project.id, name: project.name, type: "project" as const, parentId: "vault-root", projectId: project.id, path: project.name })),
@@ -379,8 +455,9 @@ const assertOneOf = <T extends string>(value:string, allowed:readonly T[], label
 const mapProject = (row: DbRow): Project => ({ id: row.id!, name: row.name!, storagePath:row.storage_path??`${row.id}/files`, description: row.description, icon: row.icon, color: row.color, status: row.status as EntityStatus, createdAt: row.created_at!, updatedAt: row.updated_at! });
 const mapFolder = (row: DbRow): Folder => ({ id: row.id!, projectId: row.project_id!, parentFolderId: row.parent_folder_id, name: row.name!, relativePath: row.relative_path!, status: row.status as EntityStatus, createdAt: row.created_at!, updatedAt: row.updated_at! });
 const mapDocument = (row: DbRow): DocumentFile => ({ id: row.id!, projectId: row.project_id!, parentFolderId: row.parent_folder_id, title: row.title!, kind: row.kind as "markdown" | "file", relativePath: row.relative_path!, mimeType: row.mime_type, availability:"available", status: row.status as EntityStatus, createdAt: row.created_at!, updatedAt: row.updated_at! });
-const mapKnowledgeObject = (row:DbRow):KnowledgeObject => ({id:row.id!,projectId:row.project_id!,parentFolderId:row.parent_folder_id,type:row.type as KnowledgeObject["type"],title:row.title!,body:row.body!,status:row.status as KnowledgeStatus,confidence:row.confidence as KnowledgeConfidence,author:row.author as KnowledgeObject["author"],createdAt:row.created_at!,updatedAt:row.updated_at!});
-const mapEvidenceSource = (row:DbRow):EvidenceSource => ({id:row.id!,projectId:row.project_id!,knowledgeObjectId:row.knowledge_object_id!,sourceType:row.source_type as EvidenceSource["sourceType"],sourceId:row.source_id,sourcePath:row.source_path,excerpt:row.excerpt,locator:row.locator,confidence:row.confidence as KnowledgeConfidence,availability:row.availability as EvidenceSource["availability"],createdAt:row.created_at!});
+const mapKnowledgeObject = (row:DbRow):KnowledgeObject => ({id:row.id!,projectId:row.project_id!,parentFolderId:row.parent_folder_id,type:row.type as KnowledgeObject["type"],title:row.title!,body:row.body!,status:row.status as KnowledgeStatus,confidence:row.confidence as KnowledgeConfidence,author:row.author as KnowledgeObject["author"],supersededById:row.superseded_by_id,createdAt:row.created_at!,updatedAt:row.updated_at!});
+const mapEvidenceSource = (row:DbRow):EvidenceSource => ({id:row.id!,projectId:row.project_id!,sourceType:row.source_type as EvidenceSource["sourceType"],sourceId:row.source_id,sourcePath:row.source_path,excerpt:row.excerpt,locator:row.locator,confidence:row.confidence as KnowledgeConfidence,availability:row.availability as EvidenceSource["availability"],createdAt:row.created_at!});
+const mapKnowledgeEvidenceLink = (row:DbRow):KnowledgeEvidenceLink => ({id:row.link_id!,knowledgeObjectId:row.knowledge_object_id!,evidenceSourceId:row.evidence_source_id!,originalKnowledgeObjectId:row.original_knowledge_object_id!,operationId:row.operation_id!,createdAt:row.created_at!});
 const mapRelationship = (row:DbRow):Relationship => ({id:row.id!,projectId:row.project_id!,sourceType:row.source_type as RelationshipEndpointType,sourceId:row.source_id!,targetType:row.target_type as RelationshipEndpointType,targetId:row.target_id!,relationshipType:row.relationship_type as RelationshipType,author:row.author as Relationship["author"],createdAt:row.created_at!});
 const snapshotFolderPath=(folders:Folder[],id:string)=>folders.find(item=>item.id===id)?.relativePath??"Knowledge";
 const SEARCHABLE_EXTENSIONS=new Set([".md",".txt",".json",".csv",".tsv",".js",".jsx",".ts",".tsx",".css",".html",".xml",".yaml",".yml",".toml",".ini",".log",".py",".java",".c",".h",".cpp",".cs",".go",".rs",".sql",".sh",".ps1"]);

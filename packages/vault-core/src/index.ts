@@ -1,6 +1,6 @@
 import type {
   CreateEvidenceSourceInput, CreateFolderInput, CreateKnowledgeObjectInput, CreateMarkdownInput, CreateProjectInput, CreateRelationshipInput, DocumentFile, EntityStatus, ImportFilesInput,
-  EvidenceSource, Folder, KnowledgeFilters, KnowledgeObject, KnowledgeSearchInput, KnowledgeStatus, Project, ProjectFilters,
+  EvidenceSource, Folder, KnowledgeEvidenceLink, KnowledgeFilters, KnowledgeObject, KnowledgeSearchInput, KnowledgeStatus, Project, ProjectFilters,
   ReconciliationReport, Relationship, RelationshipFilters, SearchInput, SearchResult, UpdateKnowledgeObjectInput, UpdateProjectInput, VaultSnapshot,
 } from "@orbit/vault-types";
 
@@ -70,6 +70,7 @@ export interface KnowledgeRepository {
 export interface EvidenceRepository {
   attachEvidence(input: CreateEvidenceSourceInput): EvidenceSource;
   listEvidence(knowledgeObjectId: string): EvidenceSource[];
+  listEvidenceLinks(knowledgeObjectId: string): KnowledgeEvidenceLink[];
 }
 export interface RelationshipRepository {
   createRelationship(input: CreateRelationshipInput): Relationship;
