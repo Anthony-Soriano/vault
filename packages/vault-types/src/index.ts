@@ -231,6 +231,11 @@ export interface VaultRendererApi {
     update(id: string, changes: UpdateKnowledgeObjectInput): Promise<ApiResult<KnowledgeObject>>;
     approve(id: string): Promise<ApiResult<KnowledgeObject>>;
     archive(id: string): Promise<ApiResult<KnowledgeObject>>;
+    restore(id: string, reason?: string | null): Promise<ApiResult<KnowledgeObject>>;
+    supersede(input: SupersedeKnowledgeInput): Promise<ApiResult<KnowledgeObject>>;
+    previewMerge(input: MergeKnowledgeInput): Promise<ApiResult<MergeKnowledgePreview>>;
+    merge(input: MergeKnowledgeInput): Promise<ApiResult<MergeKnowledgeResult>>;
+    history(knowledgeObjectId: string): Promise<ApiResult<KnowledgeHistoryRecord[]>>;
     search(input: KnowledgeSearchInput): Promise<ApiResult<KnowledgeObject[]>>;
   };
   evidence: {

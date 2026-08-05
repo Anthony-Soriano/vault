@@ -38,7 +38,10 @@ const vaultApi: VaultRendererApi = {
   knowledge: {
     list: (filters) => call("vault:knowledge:list", filters), create: (input) => call("vault:knowledge:create", input),
     update: (id, changes) => call("vault:knowledge:update", id, changes), approve: (id) => call("vault:knowledge:approve", id),
-    archive: (id) => call("vault:knowledge:archive", id), search: (input) => call("vault:knowledge:search", input),
+    archive: (id) => call("vault:knowledge:archive", id), restore: (id, reason) => call("vault:knowledge:restore", id, reason),
+    supersede: (input) => call("vault:knowledge:supersede", input), previewMerge: (input) => call("vault:knowledge:merge-preview", input),
+    merge: (input) => call("vault:knowledge:merge", input), history: (knowledgeObjectId) => call("vault:knowledge:history", knowledgeObjectId),
+    search: (input) => call("vault:knowledge:search", input),
   },
   evidence: {
     list: (knowledgeObjectId) => call("vault:evidence:list", knowledgeObjectId), attach: (input) => call("vault:evidence:attach", input),
