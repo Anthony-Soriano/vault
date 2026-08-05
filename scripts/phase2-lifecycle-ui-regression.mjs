@@ -62,6 +62,11 @@ const typeContracts = [
 
 for (const contract of typeContracts) requireContract(types, contract, `VaultRendererApi knowledge method ${contract}`);
 
+requireContract(main, /handle\("vault:integrity:analyze", projectId => vault\.integrity\.analyze\(projectId\)\);/, "integrity analyze main handler (read-only, no mutates flag)");
+assert.doesNotMatch(main, /vault:integrity:analyze"[^;]*, true\)/, "integrity analyze must not be marked as mutating");
+requireContract(preload, /integrity: \{ analyze: \(projectId\) => call\("vault:integrity:analyze", projectId\) \},/, "preload integrity.analyze bridge method");
+requireContract(types, /integrity: \{ analyze\(projectId: string\): Promise<ApiResult<IntegrityReport>> \};/, "VaultRendererApi integrity contract");
+
 const orbitDesktopBridge = types.match(/export interface OrbitDesktopBridge \{([\s\S]*?)\n\}/)?.[1] ?? "";
 for (const method of ["restore", "supersede", "previewMerge", "merge", "history"]) {
   assert.doesNotMatch(orbitDesktopBridge, new RegExp(`\\b${method}\\b`), `Lifecycle method ${method} must not be added to OrbitDesktopBridge`);

@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { CreateEvidenceSourceInput, CreateFolderInput, CreateKnowledgeObjectInput, CreateMarkdownInput, CreateProjectInput, CreateRelationshipInput, DocumentFile, EntityStatus, EvidenceSource, Folder, ImportFilesInput, KnowledgeAggregateSnapshot, KnowledgeConfidence, KnowledgeEvidenceLink, KnowledgeFilters, KnowledgeHistoryEvent, KnowledgeHistoryRecord, KnowledgeObject, KnowledgeSearchInput, KnowledgeStatus, MergeKnowledgeInput, MergeKnowledgePreview, MergeKnowledgeResult, MergeRelationshipConflict, Project, ProjectFilters, ReconciliationReport, Relationship, RelationshipEndpointType, RelationshipFilters, RelationshipType, SearchInput, SearchResult, SupersedeKnowledgeInput, UpdateKnowledgeObjectInput, UpdateProjectInput, VaultSnapshot } from "@orbit/vault-types";
-import { VaultDomainError, type VaultRepository } from "@orbit/vault-core";
+import { VaultDomainError, analyzeKnowledgeIntegrity, type VaultRepository } from "@orbit/vault-core";
 
 type StorageOptions = { vaultRoot: string; developmentMode: boolean; developmentRoot: string };
 type DbRow = Record<string, string | null>;
@@ -458,6 +458,22 @@ export class SqliteVaultRepository implements VaultRepository {
   listRelationships(filters:RelationshipFilters){this.getProject(filters.projectId);const rows=(this.db.prepare("SELECT * FROM relationships WHERE project_id=? ORDER BY created_at DESC").all(filters.projectId) as DbRow[]).map(mapRelationship);if(!filters.entityType||!filters.entityId)return rows;return rows.filter(item=>(item.sourceType===filters.entityType&&item.sourceId===filters.entityId)||(item.targetType===filters.entityType&&item.targetId===filters.entityId));}
   removeRelationship(id:string){const row=this.db.prepare("SELECT id FROM relationships WHERE id=?").get(id) as {id:string}|undefined;if(!row)throw notFound("Relationship");this.db.prepare("DELETE FROM relationships WHERE id=?").run(id);return{id};}
   private entityProjectId(type:RelationshipEndpointType,id:string){if(type==="project")return this.getProject(id).id;if(type==="folder")return this.getFolder(id).projectId;if(type==="document")return this.getDocument(id).projectId;return this.getKnowledgeObject(id).projectId;}
+
+  analyzeIntegrity(projectId: string) {
+    this.getProject(projectId);
+    const projects = this.listProjects();
+    const folders = projects.flatMap(project => this.listProjectFolders(project.id));
+    const documents = projects.flatMap(project => this.listProjectDocuments(project.id));
+    const knowledgeObjects = projects.flatMap(project => this.listKnowledgeObjects({ projectId: project.id }));
+    const relationships = projects.flatMap(project => this.listRelationships({ projectId: project.id }));
+    const evidenceLinks = knowledgeObjects.flatMap(object => this.listEvidenceLinks(object.id));
+    const evidenceById = new Map<string, EvidenceSource>();
+    for (const object of knowledgeObjects) for (const source of this.listEvidence(object.id)) evidenceById.set(source.id, source);
+    return analyzeKnowledgeIntegrity({
+      projectId, projects, folders, documents, knowledgeObjects,
+      evidenceSources: [...evidenceById.values()], relationships, evidenceLinks,
+    });
+  }
 
   snapshot(): VaultSnapshot {
     const projects = this.listProjects({ status: "active" });

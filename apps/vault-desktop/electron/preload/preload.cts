@@ -50,6 +50,7 @@ const vaultApi: VaultRendererApi = {
     list: (filters) => call("vault:relationships:list", filters), create: (input) => call("vault:relationships:create", input),
     remove: (id) => call("vault:relationships:remove", id),
   },
+  integrity: { analyze: (projectId) => call("vault:integrity:analyze", projectId) },
   search: { query: (input) => call("vault:search", input) },
   development: { seed: () => call("vault:development:seed"), reset: () => call("vault:development:reset") },
 };

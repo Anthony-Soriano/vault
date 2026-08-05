@@ -117,6 +117,36 @@ export interface KnowledgeHistoryRecord {
   createdAt: string;
 }
 
+export type IntegrityFindingKind =
+  | "missing_evidence" | "orphaned" | "broken_reference" | "duplicate_candidate" | "unanswered_question";
+export type IntegritySeverity = "error" | "warning";
+export interface IntegrityFinding {
+  id: string;
+  kind: IntegrityFindingKind;
+  severity: IntegritySeverity;
+  subjectId: string;
+  relatedIds: string[];
+  message: string;
+}
+export interface IntegrityReport {
+  projectId: string;
+  findings: IntegrityFinding[];
+  totalCount: number;
+  errorCount: number;
+  warningCount: number;
+  countsByKind: Record<IntegrityFindingKind, number>;
+}
+export interface IntegrityAnalyzerInput {
+  projectId: string;
+  projects: Project[];
+  folders: Folder[];
+  documents: DocumentFile[];
+  knowledgeObjects: KnowledgeObject[];
+  evidenceSources: EvidenceSource[];
+  relationships: Relationship[];
+  evidenceLinks: KnowledgeEvidenceLink[];
+}
+
 export type CreateProjectInput = Pick<Project, "name"> & Partial<Pick<Project, "description" | "icon" | "color">>;
 export type UpdateProjectInput = Partial<Pick<Project, "name" | "description" | "icon" | "color">>;
 export type CreateFolderInput = { projectId: string; parentFolderId: string | null; name: string };
@@ -247,6 +277,7 @@ export interface VaultRendererApi {
     create(input: CreateRelationshipInput): Promise<ApiResult<Relationship>>;
     remove(id: string): Promise<ApiResult<{ id: string }>>;
   };
+  integrity: { analyze(projectId: string): Promise<ApiResult<IntegrityReport>> };
   search: { query(input: SearchInput): Promise<ApiResult<SearchResult[]>> };
   development: {
     seed(): Promise<ApiResult<{ seeded: boolean; snapshot: VaultSnapshot }>>;
