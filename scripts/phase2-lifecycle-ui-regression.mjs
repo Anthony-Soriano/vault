@@ -8,6 +8,8 @@ const read = path => readFileSync(resolve(root, path), "utf8");
 const main = read("apps/vault-desktop/electron/main/main.ts");
 const preload = read("apps/vault-desktop/electron/preload/preload.cts");
 const types = read("packages/vault-types/src/index.ts");
+const renderer = read("apps/vault-desktop/renderer/src/KnowledgeView.tsx");
+const styles = read("apps/vault-desktop/renderer/src/styles.css");
 
 const requireContract = (source, pattern, description) =>
   assert.match(source, pattern, `Missing lifecycle IPC contract: ${description}`);
@@ -65,4 +67,31 @@ for (const method of ["restore", "supersede", "previewMerge", "merge", "history"
   assert.doesNotMatch(orbitDesktopBridge, new RegExp(`\\b${method}\\b`), `Lifecycle method ${method} must not be added to OrbitDesktopBridge`);
 }
 
-console.log("Lifecycle IPC/preload regression checks passed.");
+const visibleLabels = [
+  "History",
+  "Restore",
+  "Supersede",
+  "Merge knowledge",
+  "Evidence transferred",
+  "Relationships redirected",
+  "Duplicate links collapsed",
+  "Self-links removed",
+];
+
+for (const label of visibleLabels) {
+  assert.match(renderer, new RegExp(label), `Missing lifecycle UI label: ${label}`);
+}
+
+for (const method of ["history", "restore", "supersede", "previewMerge", "merge"]) {
+  assert.match(renderer, new RegExp(`\\.${method}\\(`), `Missing lifecycle UI API call: knowledge.${method}`);
+}
+
+assert.match(renderer, /role="dialog"/, "Lifecycle application modal must use role=dialog");
+assert.match(renderer, /aria-modal="true"/, "Lifecycle application modal must be aria-modal");
+assert.doesNotMatch(renderer, /window\.confirm/, "Lifecycle actions must not use window.confirm");
+
+for (const selector of [".knowledge-history", ".history-operation", ".lifecycle-modal", ".merge-preview", ".merge-conflicts"]) {
+  assert.match(styles, new RegExp(selector.replace(".", "\\.")), `Missing lifecycle UI style: ${selector}`);
+}
+
+console.log("Lifecycle IPC/preload/UI regression checks passed.");
