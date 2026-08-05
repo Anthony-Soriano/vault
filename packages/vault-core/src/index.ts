@@ -1,6 +1,6 @@
 import type {
   CreateEvidenceSourceInput, CreateFolderInput, CreateKnowledgeObjectInput, CreateMarkdownInput, CreateProjectInput, CreateRelationshipInput, DocumentFile, EntityStatus, ImportFilesInput,
-  EvidenceSource, Folder, KnowledgeEvidenceLink, KnowledgeFilters, KnowledgeObject, KnowledgeSearchInput, KnowledgeStatus, Project, ProjectFilters,
+  EvidenceSource, Folder, KnowledgeEvidenceLink, KnowledgeFilters, KnowledgeHistoryRecord, KnowledgeObject, KnowledgeSearchInput, KnowledgeStatus, Project, ProjectFilters, SupersedeKnowledgeInput,
   ReconciliationReport, Relationship, RelationshipFilters, SearchInput, SearchResult, UpdateKnowledgeObjectInput, UpdateProjectInput, VaultSnapshot,
 } from "@orbit/vault-types";
 
@@ -65,6 +65,9 @@ export interface KnowledgeRepository {
   listKnowledgeObjects(filters: KnowledgeFilters): KnowledgeObject[];
   updateKnowledgeObject(id: string, changes: UpdateKnowledgeObjectInput): KnowledgeObject;
   setKnowledgeStatus(id: string, status: KnowledgeStatus): KnowledgeObject;
+  restoreKnowledgeObject(id: string, reason: string | null): KnowledgeObject;
+  supersedeKnowledgeObject(input: SupersedeKnowledgeInput): KnowledgeObject;
+  listKnowledgeHistory(knowledgeObjectId: string): KnowledgeHistoryRecord[];
   searchKnowledge(input: KnowledgeSearchInput): KnowledgeObject[];
 }
 export interface EvidenceRepository {
@@ -127,8 +130,11 @@ export class VaultService {
     list: (filters: KnowledgeFilters) => this.repository.listKnowledgeObjects({ ...filters, projectId: assertIdentifier(filters.projectId, "projectId") }),
     create: (input: CreateKnowledgeObjectInput) => this.repository.createKnowledgeObject({ ...input, projectId: assertIdentifier(input.projectId, "projectId"), parentFolderId: input.parentFolderId ? assertIdentifier(input.parentFolderId, "parentFolderId") : null, title: knowledgeText(input.title, "title", 160), body: knowledgeText(input.body, "body", 20000) }),
     update: (id: string, changes: UpdateKnowledgeObjectInput) => this.repository.updateKnowledgeObject(assertIdentifier(id), { ...changes, ...(changes.parentFolderId !== undefined ? { parentFolderId: changes.parentFolderId ? assertIdentifier(changes.parentFolderId,"parentFolderId") : null } : {}), ...(changes.title !== undefined ? { title: knowledgeText(changes.title, "title", 160) } : {}), ...(changes.body !== undefined ? { body: knowledgeText(changes.body, "body", 20000) } : {}) }),
-    approve: (id: string) => { const knowledgeId=assertIdentifier(id); if(this.repository.listEvidence(knowledgeId).length===0)throw new VaultDomainError("VALIDATION_ERROR","Attach at least one evidence source before approval.","evidence"); return this.repository.setKnowledgeStatus(knowledgeId, "approved"); },
+    approve: (id: string) => this.repository.setKnowledgeStatus(assertIdentifier(id), "approved"),
     archive: (id: string) => this.repository.setKnowledgeStatus(assertIdentifier(id), "archived"),
+    restore: (id: string, reason?: string | null) => this.repository.restoreKnowledgeObject(assertIdentifier(id), normalizeReason(reason)),
+    supersede: (input: SupersedeKnowledgeInput) => this.repository.supersedeKnowledgeObject({ ...input, projectId: assertIdentifier(input.projectId,"projectId"), knowledgeObjectId: assertIdentifier(input.knowledgeObjectId,"knowledgeObjectId"), ...(input.supersededById !== undefined ? { supersededById: input.supersededById ? assertIdentifier(input.supersededById,"supersededById") : null } : {}), reason: normalizeReason(input.reason) }),
+    history: (id: string) => this.repository.listKnowledgeHistory(assertIdentifier(id)),
     search: (input: KnowledgeSearchInput) => { const query=input.query.trim(); return query ? this.repository.searchKnowledge({ ...input, query, limit: clampLimit(input.limit) }) : []; },
   };
   evidence = {
@@ -150,3 +156,4 @@ export class VaultService {
 
 const clampLimit = (limit?: number) => Math.min(100, Math.max(1, limit ?? 30));
 const knowledgeText = (value: string, field: string, maximum: number) => { const text=String(value).trim(); if (!text) throw new VaultDomainError("VALIDATION_ERROR", `Knowledge ${field} is required.`, field); if (text.length>maximum) throw new VaultDomainError("VALIDATION_ERROR", `Knowledge ${field} is too long.`, field); return text; };
+const normalizeReason = (value: string | null | undefined) => { const reason = value == null ? "" : String(value).trim(); if (reason.length > 500) throw new VaultDomainError("VALIDATION_ERROR", "Reason must be 500 characters or fewer.", "reason"); return reason || null; };

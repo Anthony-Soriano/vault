@@ -2,7 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import type { CreateEvidenceSourceInput, CreateFolderInput, CreateKnowledgeObjectInput, CreateMarkdownInput, CreateProjectInput, CreateRelationshipInput, DocumentFile, EntityStatus, EvidenceSource, Folder, ImportFilesInput, KnowledgeConfidence, KnowledgeEvidenceLink, KnowledgeFilters, KnowledgeObject, KnowledgeSearchInput, KnowledgeStatus, Project, ProjectFilters, ReconciliationReport, Relationship, RelationshipEndpointType, RelationshipFilters, RelationshipType, SearchInput, SearchResult, UpdateKnowledgeObjectInput, UpdateProjectInput, VaultSnapshot } from "@orbit/vault-types";
+import type { CreateEvidenceSourceInput, CreateFolderInput, CreateKnowledgeObjectInput, CreateMarkdownInput, CreateProjectInput, CreateRelationshipInput, DocumentFile, EntityStatus, EvidenceSource, Folder, ImportFilesInput, KnowledgeAggregateSnapshot, KnowledgeConfidence, KnowledgeEvidenceLink, KnowledgeFilters, KnowledgeHistoryEvent, KnowledgeHistoryRecord, KnowledgeObject, KnowledgeSearchInput, KnowledgeStatus, Project, ProjectFilters, ReconciliationReport, Relationship, RelationshipEndpointType, RelationshipFilters, RelationshipType, SearchInput, SearchResult, SupersedeKnowledgeInput, UpdateKnowledgeObjectInput, UpdateProjectInput, VaultSnapshot } from "@orbit/vault-types";
 import { VaultDomainError, type VaultRepository } from "@orbit/vault-core";
 
 type StorageOptions = { vaultRoot: string; developmentMode: boolean; developmentRoot: string };
@@ -306,22 +306,46 @@ export class SqliteVaultRepository implements VaultRepository {
   createKnowledgeObject(input: CreateKnowledgeObjectInput) {
     this.getProject(input.projectId); assertOneOf(input.type, KNOWLEDGE_TYPES, "knowledge type"); assertOneOf(input.confidence, CONFIDENCE_LEVELS, "confidence");
     if(input.parentFolderId){const folder=this.getFolder(input.parentFolderId);if(folder.projectId!==input.projectId)throw invalidMove("Knowledge cannot be assigned to a folder in another project.");}
-    const id=entityId(), timestamp=now();
-    this.db.prepare("INSERT INTO knowledge_objects(id,project_id,type,title,body,status,confidence,author,created_at,updated_at,parent_folder_id) VALUES (?, ?, ?, ?, ?, 'draft', ?, 'user', ?, ?, ?)").run(id, input.projectId, input.type, input.title, input.body, input.confidence, timestamp, timestamp,input.parentFolderId??null);
-    return this.getKnowledgeObject(id);
+    return this.transaction(() => {
+      const id=entityId(), timestamp=now();
+      this.db.prepare("INSERT INTO knowledge_objects(id,project_id,type,title,body,status,confidence,author,created_at,updated_at,parent_folder_id) VALUES (?, ?, ?, ?, ?, 'draft', ?, 'user', ?, ?, ?)").run(id, input.projectId, input.type, input.title, input.body, input.confidence, timestamp, timestamp,input.parentFolderId??null);
+      const created=this.getKnowledgeObject(id); this.appendKnowledgeHistory(id,entityId(),"created",null,this.captureKnowledgeAggregate(id),null);
+      return created;
+    });
   }
   getKnowledgeObject(id: string) { const row=this.db.prepare("SELECT * FROM knowledge_objects WHERE id=?").get(id) as DbRow|undefined; if(!row)throw notFound("Knowledge Object"); return mapKnowledgeObject(row); }
   listKnowledgeObjects(filters: KnowledgeFilters) {
     this.getProject(filters.projectId);
-    return (this.db.prepare("SELECT * FROM knowledge_objects WHERE project_id=? ORDER BY updated_at DESC, title").all(filters.projectId) as DbRow[]).map(mapKnowledgeObject).filter(item=>(!filters.status||item.status===filters.status)&&(!filters.type||item.type===filters.type));
+    return (this.db.prepare("SELECT * FROM knowledge_objects WHERE project_id=? ORDER BY updated_at DESC, title").all(filters.projectId) as DbRow[]).map(mapKnowledgeObject).filter(item=>(filters.status?item.status===filters.status:(item.status!=="archived"&&item.status!=="superseded"))&&(!filters.type||item.type===filters.type));
   }
   updateKnowledgeObject(id: string, changes: UpdateKnowledgeObjectInput) {
     const item=this.getKnowledgeObject(id); if(changes.type)assertOneOf(changes.type,KNOWLEDGE_TYPES,"knowledge type"); if(changes.confidence)assertOneOf(changes.confidence,CONFIDENCE_LEVELS,"confidence");
     if(changes.parentFolderId){const folder=this.getFolder(changes.parentFolderId);if(folder.projectId!==item.projectId)throw invalidMove("Knowledge cannot be assigned to a folder in another project.");}
-    this.db.prepare("UPDATE knowledge_objects SET type=?, title=?, body=?, confidence=?, parent_folder_id=?, updated_at=? WHERE id=?").run(changes.type??item.type,changes.title??item.title,changes.body??item.body,changes.confidence??item.confidence,changes.parentFolderId===undefined?item.parentFolderId:changes.parentFolderId,now(),id);
-    return this.getKnowledgeObject(id);
+    const next={type:changes.type??item.type,title:changes.title??item.title,body:changes.body??item.body,confidence:changes.confidence??item.confidence,parentFolderId:changes.parentFolderId===undefined?item.parentFolderId:changes.parentFolderId};
+    if(next.type===item.type&&next.title===item.title&&next.body===item.body&&next.confidence===item.confidence&&next.parentFolderId===item.parentFolderId)return item;
+    return this.transaction(() => { const before=this.captureKnowledgeAggregate(id); this.db.prepare("UPDATE knowledge_objects SET type=?, title=?, body=?, confidence=?, parent_folder_id=?, updated_at=? WHERE id=?").run(next.type,next.title,next.body,next.confidence,next.parentFolderId,now(),id); this.appendKnowledgeHistory(id,entityId(),"edited",before,this.captureKnowledgeAggregate(id),null); return this.getKnowledgeObject(id); });
   }
-  setKnowledgeStatus(id: string, status: KnowledgeStatus) { this.getKnowledgeObject(id); assertOneOf(status,KNOWLEDGE_STATUSES,"knowledge status"); this.db.prepare("UPDATE knowledge_objects SET status=?, updated_at=? WHERE id=?").run(status,now(),id); return this.getKnowledgeObject(id); }
+  setKnowledgeStatus(id: string, status: KnowledgeStatus) {
+    assertOneOf(status,KNOWLEDGE_STATUSES,"knowledge status");
+    return this.transaction(() => { const item=this.getKnowledgeObject(id), before=this.captureKnowledgeAggregate(id); let event:KnowledgeHistoryEvent;
+      if(status==="approved"){if(item.status!=="draft")throw new VaultDomainError("VALIDATION_ERROR","Only draft knowledge can be approved.");if(this.listEvidenceLinks(id).length===0)throw new VaultDomainError("VALIDATION_ERROR","Attach at least one evidence source before approval.","evidence");event="approved";}
+      else if(status==="archived"){if(item.status!=="draft"&&item.status!=="approved")throw new VaultDomainError("VALIDATION_ERROR","Only draft or approved knowledge can be archived.");event="archived";}
+      else throw new VaultDomainError("VALIDATION_ERROR","Use the explicit lifecycle operation for this status.");
+      this.db.prepare("UPDATE knowledge_objects SET status=?, updated_at=? WHERE id=?").run(status,now(),id); this.appendKnowledgeHistory(id,entityId(),event,before,this.captureKnowledgeAggregate(id),null); return this.getKnowledgeObject(id);
+    });
+  }
+  restoreKnowledgeObject(id:string,reason:string|null) {
+    return this.transaction(() => { const item=this.getKnowledgeObject(id); if(item.status!=="archived")throw new VaultDomainError("VALIDATION_ERROR","Only archived knowledge can be restored."); const archive=this.db.prepare("SELECT * FROM knowledge_object_history WHERE knowledge_object_id=? AND event_type='archived' ORDER BY created_at DESC, rowid DESC LIMIT 1").get(id) as DbRow|undefined; const previous=archive?mapKnowledgeHistory(archive).beforeSnapshot?.object.status:null; if(previous!=="draft"&&previous!=="approved")throw new VaultDomainError("VALIDATION_ERROR","Cannot restore knowledge without a valid archive history."); const before=this.captureKnowledgeAggregate(id); this.db.prepare("UPDATE knowledge_objects SET status=?, updated_at=? WHERE id=?").run(previous,now(),id); this.appendKnowledgeHistory(id,entityId(),"restored",before,this.captureKnowledgeAggregate(id),reason); return this.getKnowledgeObject(id); });
+  }
+  supersedeKnowledgeObject(input:SupersedeKnowledgeInput) {
+    return this.transaction(() => { const source=this.getKnowledgeObject(input.knowledgeObjectId); if(source.projectId!==input.projectId)throw new VaultDomainError("VALIDATION_ERROR","Knowledge must belong to the specified project.","knowledgeObjectId"); if(source.status!=="draft"&&source.status!=="approved")throw new VaultDomainError("VALIDATION_ERROR","Only draft or approved knowledge can be superseded."); const replacementId=input.supersededById??null;
+      if(replacementId){if(replacementId===source.id)throw new VaultDomainError("VALIDATION_ERROR","Knowledge cannot supersede itself.","supersededById");const replacement=this.getKnowledgeObject(replacementId);if(replacement.projectId!==source.projectId)throw new VaultDomainError("VALIDATION_ERROR","Replacement knowledge must belong to the same project.","supersededById");if(replacement.status!=="draft"&&replacement.status!=="approved")throw new VaultDomainError("VALIDATION_ERROR","Replacement knowledge must be draft or approved.","supersededById");}
+      const before=this.captureKnowledgeAggregate(source.id); this.db.prepare("UPDATE knowledge_objects SET status='superseded', superseded_by_id=?, updated_at=? WHERE id=?").run(replacementId,now(),source.id); this.appendKnowledgeHistory(source.id,entityId(),"superseded",before,this.captureKnowledgeAggregate(source.id),input.reason??null); return this.getKnowledgeObject(source.id);
+    });
+  }
+  listKnowledgeHistory(knowledgeObjectId:string) { this.getKnowledgeObject(knowledgeObjectId); return (this.db.prepare("SELECT * FROM knowledge_object_history WHERE knowledge_object_id=? ORDER BY created_at DESC, rowid DESC").all(knowledgeObjectId) as DbRow[]).map(mapKnowledgeHistory); }
+  private captureKnowledgeAggregate(id:string):KnowledgeAggregateSnapshot { return {schemaVersion:1,object:this.getKnowledgeObject(id),evidenceLinks:(this.db.prepare("SELECT * FROM knowledge_evidence_links WHERE knowledge_object_id=? ORDER BY created_at, link_id").all(id) as DbRow[]).map(mapKnowledgeEvidenceLink),incomingRelationships:(this.db.prepare("SELECT * FROM relationships WHERE target_type='knowledge' AND target_id=? ORDER BY created_at, id").all(id) as DbRow[]).map(mapRelationship),outgoingRelationships:(this.db.prepare("SELECT * FROM relationships WHERE source_type='knowledge' AND source_id=? ORDER BY created_at, id").all(id) as DbRow[]).map(mapRelationship)}; }
+  private appendKnowledgeHistory(knowledgeObjectId:string,operationId:string,eventType:KnowledgeHistoryEvent,beforeSnapshot:KnowledgeAggregateSnapshot|null,afterSnapshot:KnowledgeAggregateSnapshot|null,reason:string|null) { this.db.prepare("INSERT INTO knowledge_object_history(history_id, knowledge_object_id, operation_id, event_type, before_snapshot, after_snapshot, actor_type, actor_id, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, 'user', NULL, ?, ?)").run(entityId(),knowledgeObjectId,operationId,eventType,beforeSnapshot?JSON.stringify(beforeSnapshot):null,afterSnapshot?JSON.stringify(afterSnapshot):null,reason,now()); }
   searchKnowledge(input: KnowledgeSearchInput) {
     const needle=input.query.toLowerCase();
     const projects=input.projectId?[this.getProject(input.projectId)]:this.listProjects({status:"active"});
@@ -362,7 +386,7 @@ export class SqliteVaultRepository implements VaultRepository {
     const folders = (this.db.prepare("SELECT * FROM folders WHERE status='active' ORDER BY relative_path").all() as DbRow[]).map(mapFolder).filter(folder => projectIds.has(folder.projectId));
     const folderIds = new Set(folders.map(folder => folder.id));
     const documents = (this.db.prepare("SELECT * FROM documents WHERE status='active' ORDER BY relative_path").all() as DbRow[]).map(mapDocument).map(item=>this.withAvailability(item)).filter(document => projectIds.has(document.projectId) && (!document.parentFolderId || folderIds.has(document.parentFolderId)));
-    const knowledgeObjects=(this.db.prepare("SELECT * FROM knowledge_objects WHERE status<>'archived' ORDER BY updated_at DESC").all() as DbRow[]).map(mapKnowledgeObject).filter(item=>projectIds.has(item.projectId));
+    const knowledgeObjects=(this.db.prepare("SELECT * FROM knowledge_objects WHERE status NOT IN ('archived','superseded') ORDER BY updated_at DESC").all() as DbRow[]).map(mapKnowledgeObject).filter(item=>projectIds.has(item.projectId));
     const knowledgeIds=new Set(knowledgeObjects.map(item=>item.id));
     const evidenceLinks=(this.db.prepare("SELECT * FROM knowledge_evidence_links ORDER BY created_at DESC, link_id DESC").all() as DbRow[]).map(mapKnowledgeEvidenceLink).filter(link=>knowledgeIds.has(link.knowledgeObjectId));
     const evidenceIds=new Set(evidenceLinks.map(link=>link.evidenceSourceId));
@@ -390,7 +414,7 @@ export class SqliteVaultRepository implements VaultRepository {
         const contentIndex = content.toLowerCase().indexOf(needle);
         if (document.title.toLowerCase().includes(needle) || contentIndex >= 0) results.push({ id: document.id, entityType: "document", projectId: project.id, projectName: project.name, title: document.title, path: `${project.name} / ${document.relativePath}`, excerpt: contentIndex >= 0 ? content.slice(Math.max(0, contentIndex - 45), contentIndex + needle.length + 75).replace(/\s+/g, " ") : null });
       }
-      for(const item of this.listKnowledgeObjects({projectId:project.id}).filter(item=>item.status!=="archived")){const index=item.body.toLowerCase().indexOf(needle);if(item.title.toLowerCase().includes(needle)||index>=0)results.push({id:item.id,entityType:"knowledge",projectId:project.id,projectName:project.name,title:item.title,path:`${project.name} / Knowledge / ${item.type}`,excerpt:index>=0?item.body.slice(Math.max(0,index-45),index+needle.length+75):null});}
+      for(const item of this.listKnowledgeObjects({projectId:project.id})){const index=item.body.toLowerCase().indexOf(needle);if(item.title.toLowerCase().includes(needle)||index>=0)results.push({id:item.id,entityType:"knowledge",projectId:project.id,projectName:project.name,title:item.title,path:`${project.name} / Knowledge / ${item.type}`,excerpt:index>=0?item.body.slice(Math.max(0,index-45),index+needle.length+75):null});}
     }
     return results.slice(0, limit);
   }
@@ -458,6 +482,7 @@ const mapDocument = (row: DbRow): DocumentFile => ({ id: row.id!, projectId: row
 const mapKnowledgeObject = (row:DbRow):KnowledgeObject => ({id:row.id!,projectId:row.project_id!,parentFolderId:row.parent_folder_id,type:row.type as KnowledgeObject["type"],title:row.title!,body:row.body!,status:row.status as KnowledgeStatus,confidence:row.confidence as KnowledgeConfidence,author:row.author as KnowledgeObject["author"],supersededById:row.superseded_by_id,createdAt:row.created_at!,updatedAt:row.updated_at!});
 const mapEvidenceSource = (row:DbRow):EvidenceSource => ({id:row.id!,projectId:row.project_id!,sourceType:row.source_type as EvidenceSource["sourceType"],sourceId:row.source_id,sourcePath:row.source_path,excerpt:row.excerpt,locator:row.locator,confidence:row.confidence as KnowledgeConfidence,availability:row.availability as EvidenceSource["availability"],createdAt:row.created_at!});
 const mapKnowledgeEvidenceLink = (row:DbRow):KnowledgeEvidenceLink => ({id:row.link_id!,knowledgeObjectId:row.knowledge_object_id!,evidenceSourceId:row.evidence_source_id!,originalKnowledgeObjectId:row.original_knowledge_object_id!,operationId:row.operation_id!,createdAt:row.created_at!});
+const mapKnowledgeHistory = (row:DbRow):KnowledgeHistoryRecord => ({id:row.history_id!,knowledgeObjectId:row.knowledge_object_id!,operationId:row.operation_id!,eventType:row.event_type as KnowledgeHistoryEvent,beforeSnapshot:row.before_snapshot?JSON.parse(row.before_snapshot) as KnowledgeAggregateSnapshot:null,afterSnapshot:row.after_snapshot?JSON.parse(row.after_snapshot) as KnowledgeAggregateSnapshot:null,actorType:row.actor_type as KnowledgeHistoryRecord["actorType"],actorId:row.actor_id,reason:row.reason,createdAt:row.created_at!});
 const mapRelationship = (row:DbRow):Relationship => ({id:row.id!,projectId:row.project_id!,sourceType:row.source_type as RelationshipEndpointType,sourceId:row.source_id!,targetType:row.target_type as RelationshipEndpointType,targetId:row.target_id!,relationshipType:row.relationship_type as RelationshipType,author:row.author as Relationship["author"],createdAt:row.created_at!});
 const snapshotFolderPath=(folders:Folder[],id:string)=>folders.find(item=>item.id===id)?.relativePath??"Knowledge";
 const SEARCHABLE_EXTENSIONS=new Set([".md",".txt",".json",".csv",".tsv",".js",".jsx",".ts",".tsx",".css",".html",".xml",".yaml",".yml",".toml",".ini",".log",".py",".java",".c",".h",".cpp",".cs",".go",".rs",".sql",".sh",".ps1"]);

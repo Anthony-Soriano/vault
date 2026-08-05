@@ -88,6 +88,76 @@ test("migration preserves canonical evidence and creates one honest baseline", (
   } finally { service?.close(); rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
+test("immutable lifecycle history records create edit approve archive restore and supersede", () => {
+  const ctx=fixture(); try {
+    const project=ctx.service.projects.create({name:"Lifecycle history"});
+    const source=ctx.service.knowledge.create({projectId:project.id,type:"decision",title:"Original decision",body:"The first version is evidence-backed.",confidence:"high"});
+    const created=ctx.service.knowledge.history(source.id);
+    assert.equal(created.length,1); assert.equal(created[0].eventType,"created"); assert.equal(created[0].beforeSnapshot,null); assert.deepEqual(created[0].afterSnapshot?.object,source);
+    ctx.service.evidence.attach({projectId:project.id,knowledgeObjectId:source.id,sourceType:"manual_note",sourceId:null,sourcePath:null,excerpt:"A supporting note.",locator:null,confidence:"verified"});
+    const incoming=ctx.service.relationships.create({projectId:project.id,sourceType:"project",sourceId:project.id,targetType:"knowledge",targetId:source.id,relationshipType:"references"});
+    const outgoing=ctx.service.relationships.create({projectId:project.id,sourceType:"knowledge",sourceId:source.id,targetType:"project",targetId:project.id,relationshipType:"implements"});
+    const edited=ctx.service.knowledge.update(source.id,{title:"Revised decision"});
+    const unchanged=ctx.service.knowledge.update(source.id,{title:"Revised decision"});
+    assert.equal(unchanged.updatedAt,edited.updatedAt);
+    assert.equal(ctx.service.knowledge.approve(source.id).status,"approved");
+    assert.equal(ctx.service.knowledge.archive(source.id).status,"archived");
+    assert.equal(ctx.service.knowledge.restore(source.id," restore rationale ").status,"approved");
+    const replacement=ctx.service.knowledge.create({projectId:project.id,type:"decision",title:"Replacement decision",body:"This version supersedes the original.",confidence:"verified"});
+    const superseded=ctx.service.knowledge.supersede({projectId:project.id,knowledgeObjectId:source.id,supersededById:replacement.id,reason:" replacement rationale "});
+    assert.equal(superseded.status,"superseded"); assert.equal(superseded.supersededById,replacement.id);
+    const history=ctx.service.knowledge.history(source.id);
+    assert.deepEqual(history.map(item=>item.eventType),["superseded","restored","archived","approved","edited","created"]);
+    assert.equal(new Set(history.map(item=>item.operationId)).size,history.length);
+    for(const item of history){assert.notEqual(item.operationId,"");assert.equal(item.actorType,"user");assert.equal(item.actorId,null);assert.ok(item.afterSnapshot);}
+    assert.equal(history[0].reason,"replacement rationale"); assert.equal(history[1].reason,"restore rationale"); assert.equal(history[2].reason,null);
+    assert.deepEqual(history[4].beforeSnapshot?.evidenceLinks,history[4].afterSnapshot?.evidenceLinks);
+    assert.deepEqual(history[0].afterSnapshot?.evidenceLinks.map(item=>item.knowledgeObjectId),[source.id]);
+    assert.deepEqual(history[0].afterSnapshot?.incomingRelationships.map(item=>item.id),[incoming.id]);
+    assert.deepEqual(history[0].afterSnapshot?.outgoingRelationships.map(item=>item.id),[outgoing.id]);
+    assert.equal(ctx.service.knowledge.list({projectId:project.id}).some(item=>item.id===source.id),false);
+    assert.deepEqual(ctx.service.knowledge.list({projectId:project.id,status:"superseded"}).map(item=>item.id),[source.id]);
+    assert.equal(ctx.service.knowledge.search({projectId:project.id,query:"revised decision"}).some(item=>item.id===source.id),false);
+    assert.equal(ctx.service.search({projectId:project.id,query:"revised decision"}).some(item=>item.id===source.id),false);
+    assert.equal(ctx.service.snapshot().knowledgeObjects.some(item=>item.id===source.id),false);
+  } finally { ctx.dispose(); }
+});
+
+test("single-object lifecycle rejects invalid transitions and project crossings", () => {
+  const ctx=fixture(); try {
+    const first=ctx.service.projects.create({name:"First lifecycle"}),second=ctx.service.projects.create({name:"Second lifecycle"});
+    const draft=ctx.service.knowledge.create({projectId:first.id,type:"fact",title:"Draft",body:"Requires support before approval.",confidence:"medium"});
+    assert.throws(()=>ctx.service.knowledge.approve(draft.id),/evidence source/);
+    ctx.service.evidence.attach({projectId:first.id,knowledgeObjectId:draft.id,sourceType:"manual_note",sourceId:null,sourcePath:null,excerpt:null,locator:null,confidence:"verified"});
+    assert.equal(ctx.service.knowledge.approve(draft.id).status,"approved");
+    assert.throws(()=>ctx.service.knowledge.approve(draft.id),/draft/);
+    assert.throws(()=>ctx.service.knowledge.restore(draft.id),/archived/);
+    const replacement=ctx.service.knowledge.create({projectId:first.id,type:"fact",title:"Replacement",body:"A valid replacement.",confidence:"high"});
+    assert.throws(()=>ctx.service.knowledge.supersede({projectId:first.id,knowledgeObjectId:draft.id,supersededById:draft.id}),/itself/);
+    const archived=ctx.service.knowledge.create({projectId:first.id,type:"fact",title:"Archived replacement",body:"An invalid replacement.",confidence:"high"});
+    ctx.service.evidence.attach({projectId:first.id,knowledgeObjectId:archived.id,sourceType:"manual_note",sourceId:null,sourcePath:null,excerpt:null,locator:null,confidence:"high"}); ctx.service.knowledge.approve(archived.id); ctx.service.knowledge.archive(archived.id);
+    assert.throws(()=>ctx.service.knowledge.supersede({projectId:first.id,knowledgeObjectId:draft.id,supersededById:archived.id}),/draft or approved/);
+    const foreign=ctx.service.knowledge.create({projectId:second.id,type:"fact",title:"Foreign replacement",body:"Belongs elsewhere.",confidence:"high"});
+    assert.throws(()=>ctx.service.knowledge.supersede({projectId:first.id,knowledgeObjectId:draft.id,supersededById:foreign.id}),/same project/);
+    assert.throws(()=>ctx.service.knowledge.supersede({projectId:first.id,knowledgeObjectId:draft.id,supersededById:replacement.id,reason:"x".repeat(501)}),/500/);
+    ctx.service.knowledge.supersede({projectId:first.id,knowledgeObjectId:draft.id,supersededById:replacement.id});
+    assert.throws(()=>ctx.service.knowledge.archive(draft.id),/draft or approved/);
+  } finally { ctx.dispose(); }
+});
+
+test("knowledge lifecycle history persists across restart", () => {
+  const ctx=fixture(); try {
+    const project=ctx.service.projects.create({name:"Persist lifecycle"});
+    const source=ctx.service.knowledge.create({projectId:project.id,type:"fact",title:"Persistent source",body:"Lifecycle rows must survive restart.",confidence:"high"});
+    ctx.service.evidence.attach({projectId:project.id,knowledgeObjectId:source.id,sourceType:"manual_note",sourceId:null,sourcePath:null,excerpt:null,locator:null,confidence:"verified"}); ctx.service.knowledge.approve(source.id);
+    const replacement=ctx.service.knowledge.create({projectId:project.id,type:"fact",title:"Persistent replacement",body:"The replacement persists too.",confidence:"high"});
+    ctx.service.knowledge.supersede({projectId:project.id,knowledgeObjectId:source.id,supersededById:replacement.id,reason:"restart proof"});
+    const before=ctx.service.knowledge.history(source.id); ctx.service.close(); ctx.service.initialize();
+    const after=ctx.service.knowledge.history(source.id); const reloaded=ctx.service.knowledge.list({projectId:project.id,status:"superseded"})[0]!;
+    assert.equal(reloaded.id,source.id); assert.equal(reloaded.supersededById,replacement.id); assert.deepEqual(after,before);
+  } finally { ctx.dispose(); }
+});
+
 test("manual knowledge remains draft until explicit approval and survives restart", () => {
   const ctx=fixture(); try {
     const project=ctx.service.projects.create({name:"Knowledge Project"});
