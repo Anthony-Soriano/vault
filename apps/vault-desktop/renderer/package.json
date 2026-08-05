@@ -13,11 +13,13 @@
     "@vitejs/plugin-react": "^6.0.2",
     "vite": "^8.0.13",
     "react": "^19.2.6",
-    "react-dom": "^19.2.6"
+    "react-dom": "^19.2.6",
+    "d3-force": "^3.0.0"
   },
   "devDependencies": {
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "@types/d3-force": "^3.0.10",
     "typescript": "^5.9.3"
   }
 }

@@ -1,12 +1,14 @@
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import type { CreateFolderInput, CreateMarkdownInput, CreateProjectInput, DocumentFile, EntityStatus, Folder, Project, ProjectFilters, SearchInput, SearchResult, UpdateProjectInput, VaultSnapshot } from "@orbit/vault-types";
+import type { CreateEvidenceSourceInput, CreateFolderInput, CreateKnowledgeObjectInput, CreateMarkdownInput, CreateProjectInput, CreateRelationshipInput, DocumentFile, EntityStatus, EvidenceSource, Folder, ImportFilesInput, KnowledgeConfidence, KnowledgeFilters, KnowledgeObject, KnowledgeSearchInput, KnowledgeStatus, Project, ProjectFilters, ReconciliationReport, Relationship, RelationshipEndpointType, RelationshipFilters, RelationshipType, SearchInput, SearchResult, UpdateKnowledgeObjectInput, UpdateProjectInput, VaultSnapshot } from "@orbit/vault-types";
 import { VaultDomainError, type VaultRepository } from "@orbit/vault-core";
 
 type StorageOptions = { vaultRoot: string; developmentMode: boolean; developmentRoot: string };
 type DbRow = Record<string, string | null>;
+
+const safeLinkedKind=(path:string,allowedRoot:string):"directory"|"file"|null=>{try{const resolved=realpathSync.native(path),within=relative(realpathSync.native(allowedRoot),resolved);if(within.startsWith(`..${sep}`)||within===".."||isAbsolute(within))return null;const stats=statSync(path);return stats.isDirectory()?"directory":stats.isFile()?"file":null;}catch{return null;}};
 
 const MIGRATIONS = [{
   version: 1,
@@ -36,6 +38,64 @@ const MIGRATIONS = [{
     CREATE INDEX IF NOT EXISTS folders_path_idx ON folders(project_id, relative_path);
     CREATE INDEX IF NOT EXISTS documents_path_idx ON documents(project_id, relative_path);
   `,
+}, {
+  version: 2,
+  sql: `
+    CREATE TABLE IF NOT EXISTS knowledge_objects (
+      id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
+      type TEXT NOT NULL CHECK(type IN ('fact','decision','goal','question','idea','preference')),
+      title TEXT NOT NULL, body TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('draft','approved','superseded','archived')),
+      confidence TEXT NOT NULL CHECK(confidence IN ('low','medium','high','verified')),
+      author TEXT NOT NULL CHECK(author IN ('user','ai')),
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS evidence_sources (
+      id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
+      knowledge_object_id TEXT NOT NULL REFERENCES knowledge_objects(id) ON DELETE CASCADE,
+      source_type TEXT NOT NULL CHECK(source_type IN ('document','file','url','conversation','image','pdf','manual_note')),
+      source_id TEXT, source_path TEXT, excerpt TEXT, locator TEXT,
+      confidence TEXT NOT NULL CHECK(confidence IN ('low','medium','high','verified')),
+      availability TEXT NOT NULL CHECK(availability IN ('available','missing')),
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS knowledge_project_idx ON knowledge_objects(project_id);
+    CREATE INDEX IF NOT EXISTS knowledge_status_idx ON knowledge_objects(status);
+    CREATE INDEX IF NOT EXISTS knowledge_type_idx ON knowledge_objects(type);
+    CREATE INDEX IF NOT EXISTS evidence_knowledge_idx ON evidence_sources(knowledge_object_id);
+    CREATE INDEX IF NOT EXISTS evidence_source_idx ON evidence_sources(source_type, source_id);
+  `,
+}, {
+  version: 3,
+  sql: `
+    CREATE TABLE IF NOT EXISTS relationships (
+      id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
+      source_type TEXT NOT NULL CHECK(source_type IN ('project','folder','document','knowledge')),
+      source_id TEXT NOT NULL,
+      target_type TEXT NOT NULL CHECK(target_type IN ('project','folder','document','knowledge')),
+      target_id TEXT NOT NULL,
+      relationship_type TEXT NOT NULL CHECK(relationship_type IN ('supports','references','contradicts','answers','depends_on','blocks','implements','duplicates','derived_from','belongs_to')),
+      author TEXT NOT NULL CHECK(author IN ('user','ai')),
+      created_at TEXT NOT NULL,
+      UNIQUE(project_id, source_type, source_id, target_type, target_id, relationship_type)
+    );
+    CREATE INDEX IF NOT EXISTS relationships_project_idx ON relationships(project_id);
+    CREATE INDEX IF NOT EXISTS relationships_source_idx ON relationships(source_type, source_id);
+    CREATE INDEX IF NOT EXISTS relationships_target_idx ON relationships(target_type, target_id);
+  `,
+}, {
+  version: 4,
+  sql: `
+    ALTER TABLE knowledge_objects ADD COLUMN parent_folder_id TEXT REFERENCES folders(id);
+    CREATE INDEX IF NOT EXISTS knowledge_parent_folder_idx ON knowledge_objects(parent_folder_id);
+  `,
+}, {
+  version: 5,
+  sql: `
+    ALTER TABLE projects ADD COLUMN storage_path TEXT;
+    UPDATE projects SET storage_path=id || '/files' WHERE storage_path IS NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS projects_storage_path_idx ON projects(storage_path);
+  `,
 }];
 
 export class SqliteVaultRepository implements VaultRepository {
@@ -61,10 +121,10 @@ export class SqliteVaultRepository implements VaultRepository {
   private transaction<T>(operation: () => T): T { this.db.exec("BEGIN IMMEDIATE"); try { const value = operation(); this.db.exec("COMMIT"); return value; } catch (error) { this.db.exec("ROLLBACK"); throw error; } }
 
   createProject(input: CreateProjectInput) {
-    const name = this.uniqueProjectName(input.name), id = entityId(), timestamp = now();
-    const project: Project = { id, name, description: input.description ?? null, icon: input.icon ?? null, color: input.color ?? null, status: "active", createdAt: timestamp, updatedAt: timestamp };
-    const projectPath = this.projectFilesPath(id); mkdirSync(projectPath, { recursive: true });
-    try { this.db.prepare("INSERT INTO projects VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(id, name, project.description, project.icon, project.color, project.status, timestamp, timestamp); }
+    const name = this.uniqueProjectName(input.name), id = entityId(), timestamp = now(), storagePath=`${id}/files`;
+    const project: Project = { id, name, storagePath, description: input.description ?? null, icon: input.icon ?? null, color: input.color ?? null, status: "active", createdAt: timestamp, updatedAt: timestamp };
+    const projectPath = safeResolve(join(this.options.vaultRoot,"projects"),...storagePath.split("/")); mkdirSync(projectPath, { recursive: true });
+    try { this.db.prepare("INSERT INTO projects(id,name,description,icon,color,status,created_at,updated_at,storage_path) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(id, name, project.description, project.icon, project.color, project.status, timestamp, timestamp,storagePath); }
     catch (error) { rmSync(join(this.options.vaultRoot, "projects", id), { recursive: true, force: true }); throw error; }
     return project;
   }
@@ -85,6 +145,15 @@ export class SqliteVaultRepository implements VaultRepository {
     this.transaction(() => { this.db.prepare("UPDATE projects SET status=?, updated_at=? WHERE id=?").run(status, timestamp, id); this.db.prepare("UPDATE folders SET status=?, updated_at=? WHERE project_id=?").run(status, timestamp, id); this.db.prepare("UPDATE documents SET status=?, updated_at=? WHERE project_id=?").run(status, timestamp, id); });
     return this.getProject(id);
   }
+
+  reconcileFilesystem():ReconciliationReport{
+    const report:ReconciliationReport={projectsAdded:0,projectsArchived:0,foldersAdded:0,documentsAdded:0,missingDocuments:0,ignoredEntries:0,scannedAt:now()},projectsRoot=join(this.options.vaultRoot,"projects");mkdirSync(projectsRoot,{recursive:true});
+    const projects=this.listProjects(),claimed=new Set(projects.map(item=>item.storagePath.split("/")[0].toLowerCase()));
+    for(const entry of readdirSync(projectsRoot,{withFileTypes:true})){const absolute=join(projectsRoot,entry.name),kind=entry.isDirectory()?"directory":entry.isSymbolicLink()?safeLinkedKind(absolute,projectsRoot):null;if(kind!=="directory")continue;if(IGNORED_DIRECTORIES.has(entry.name.toLowerCase())){report.ignoredEntries++;continue;}if(claimed.has(entry.name.toLowerCase()))continue;const name=this.uniqueProjectName(entry.name),id=entityId(),timestamp=now();this.db.prepare("INSERT INTO projects(id,name,description,icon,color,status,created_at,updated_at,storage_path) VALUES (?, ?, NULL, NULL, NULL, 'active', ?, ?, ?)").run(id,name,timestamp,timestamp,entry.name);report.projectsAdded++;}
+    for(const project of this.listProjects({status:"active"})){if(!existsSync(this.projectFilesPath(project.id))){this.setProjectStatus(project.id,"archived");report.projectsArchived++;continue;}this.reconcileProject(project,report);}
+    report.missingDocuments=this.listProjects().flatMap(project=>this.listProjectDocuments(project.id)).filter(item=>item.availability==="missing").length;return report;
+  }
+  private reconcileProject(project:Project,report:ReconciliationReport){const root=this.projectFilesPath(project.id);if(!existsSync(root))return;const folderByPath=new Map(this.listProjectFolders(project.id).map(item=>[item.relativePath,item]));const documentPaths=new Set(this.listProjectDocuments(project.id).map(item=>item.relativePath));let visited=0;const visit=(absolute:string,relativePath:string,parentFolderId:string|null)=>{if(++visited>25000)throw new VaultDomainError("VALIDATION_ERROR",`Project ${project.name} exceeds the 25,000 item reconciliation limit.`);for(const entry of readdirSync(absolute,{withFileTypes:true})){const childRelative=posixJoin(relativePath,entry.name),childAbsolute=join(absolute,entry.name),linkedKind=entry.isSymbolicLink()?safeLinkedKind(childAbsolute,root):null,isDirectory=entry.isDirectory()||linkedKind==="directory",isFile=entry.isFile()||linkedKind==="file";if(entry.isSymbolicLink()&&!linkedKind){report.ignoredEntries++;continue;}if(isDirectory){if(IGNORED_DIRECTORIES.has(entry.name.toLowerCase())){report.ignoredEntries++;continue;}let folder=folderByPath.get(childRelative);if(!folder){const id=entityId(),timestamp=now();this.db.prepare("INSERT INTO folders VALUES (?, ?, ?, ?, ?, 'active', ?, ?)").run(id,project.id,parentFolderId,entry.name,childRelative,timestamp,timestamp);folder=this.getFolder(id);folderByPath.set(childRelative,folder);report.foldersAdded++;}visit(childAbsolute,childRelative,folder.id);continue;}if(!isFile||IGNORED_FILES.has(entry.name.toLowerCase())){report.ignoredEntries++;continue;}if(documentPaths.has(childRelative))continue;const id=entityId(),timestamp=now(),kind=extname(entry.name).toLowerCase()===".md"?"markdown":"file";this.db.prepare("INSERT INTO documents VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)").run(id,project.id,parentFolderId,entry.name,kind,childRelative,mimeFor(entry.name),timestamp,timestamp);documentPaths.add(childRelative);report.documentsAdded++;}};visit(root,"",null);}
 
   createFolder(input: CreateFolderInput) {
     this.getProject(input.projectId); const parent = input.parentFolderId ? this.getFolder(input.parentFolderId) : null;
@@ -138,9 +207,14 @@ export class SqliteVaultRepository implements VaultRepository {
     catch (error) { rmSync(absolute, { force: true }); throw error; }
     return this.getDocument(id);
   }
-  getDocument(id: string) { const row = this.db.prepare("SELECT * FROM documents WHERE id=?").get(id) as DbRow | undefined; if (!row) throw notFound("Document"); return mapDocument(row); }
-  listProjectDocuments(projectId: string) { this.getProject(projectId); return (this.db.prepare("SELECT * FROM documents WHERE project_id=? ORDER BY relative_path").all(projectId) as DbRow[]).map(mapDocument); }
-  listFolderDocuments(folderId: string) { this.getFolder(folderId); return (this.db.prepare("SELECT * FROM documents WHERE parent_folder_id=? ORDER BY title").all(folderId) as DbRow[]).map(mapDocument); }
+  importFiles(input:ImportFilesInput){
+    this.getProject(input.projectId);const parent=input.parentFolderId?this.getFolder(input.parentFolderId):null;if(parent&&parent.projectId!==input.projectId)throw invalidMove("A file cannot use a folder from another project.");
+    const imported:DocumentFile[]=[];for(const sourcePath of input.sourcePaths){if(!isAbsolute(sourcePath)||!existsSync(sourcePath)||!statSync(sourcePath).isFile())throw new VaultDomainError("VALIDATION_ERROR",`Source file is unavailable: ${basename(sourcePath)}`);const title=this.uniqueDocumentTitle(input.projectId,input.parentFolderId,basename(sourcePath)),relativePath=posixJoin(parent?.relativePath??"",title),absolute=this.contentPath(input.projectId,relativePath),id=entityId(),timestamp=now(),temporary=`${absolute}.${randomUUID()}.tmp`;mkdirSync(dirname(absolute),{recursive:true});copyFileSync(sourcePath,temporary);renameSync(temporary,absolute);try{this.db.prepare("INSERT INTO documents VALUES (?, ?, ?, ?, 'file', ?, ?, 'active', ?, ?)").run(id,input.projectId,input.parentFolderId,title,relativePath,mimeFor(title),timestamp,timestamp);}catch(error){rmSync(absolute,{force:true});throw error;}imported.push(this.getDocument(id));}return imported;
+  }
+  getDocument(id: string) { const row = this.db.prepare("SELECT * FROM documents WHERE id=?").get(id) as DbRow | undefined; if (!row) throw notFound("Document"); return this.withAvailability(mapDocument(row)); }
+  getDocumentAbsolutePath(id:string){const document=this.getDocument(id);return this.contentPath(document.projectId,document.relativePath);}
+  listProjectDocuments(projectId: string) { this.getProject(projectId); return (this.db.prepare("SELECT * FROM documents WHERE project_id=? ORDER BY relative_path").all(projectId) as DbRow[]).map(mapDocument).map(item=>this.withAvailability(item)); }
+  listFolderDocuments(folderId: string) { this.getFolder(folderId); return (this.db.prepare("SELECT * FROM documents WHERE parent_folder_id=? ORDER BY title").all(folderId) as DbRow[]).map(mapDocument).map(item=>this.withAvailability(item)); }
   renameDocument(id: string, requestedTitle: string) { const document = this.getDocument(id); return this.relocateDocument(document, document.parentFolderId, requestedTitle); }
   moveDocument(id: string, parentFolderId: string | null) { const document = this.getDocument(id); return this.relocateDocument(document, parentFolderId, document.title); }
   private relocateDocument(document: DocumentFile, parentFolderId: string | null, requestedTitle: string) {
@@ -158,20 +232,76 @@ export class SqliteVaultRepository implements VaultRepository {
   updateMarkdownContent(id: string, content: string) { const document = this.getDocument(id); if (document.kind !== "markdown") throw new VaultDomainError("VALIDATION_ERROR", "Only Markdown documents can be edited."); atomicWrite(this.contentPath(document.projectId, document.relativePath), content); this.db.prepare("UPDATE documents SET updated_at=? WHERE id=?").run(now(), id); return this.getDocument(id); }
   readMarkdownContent(id: string) { const document = this.getDocument(id); const path = this.contentPath(document.projectId, document.relativePath); if (!existsSync(path)) throw notFound("Markdown file"); return readFileSync(path, "utf8"); }
   setDocumentStatus(id: string, status: EntityStatus) { this.getDocument(id); this.db.prepare("UPDATE documents SET status=?, updated_at=? WHERE id=?").run(status, now(), id); return this.getDocument(id); }
+  private withAvailability(document:DocumentFile):DocumentFile{return{...document,availability:existsSync(this.contentPath(document.projectId,document.relativePath))?"available":"missing"};}
+
+  createKnowledgeObject(input: CreateKnowledgeObjectInput) {
+    this.getProject(input.projectId); assertOneOf(input.type, KNOWLEDGE_TYPES, "knowledge type"); assertOneOf(input.confidence, CONFIDENCE_LEVELS, "confidence");
+    if(input.parentFolderId){const folder=this.getFolder(input.parentFolderId);if(folder.projectId!==input.projectId)throw invalidMove("Knowledge cannot be assigned to a folder in another project.");}
+    const id=entityId(), timestamp=now();
+    this.db.prepare("INSERT INTO knowledge_objects(id,project_id,type,title,body,status,confidence,author,created_at,updated_at,parent_folder_id) VALUES (?, ?, ?, ?, ?, 'draft', ?, 'user', ?, ?, ?)").run(id, input.projectId, input.type, input.title, input.body, input.confidence, timestamp, timestamp,input.parentFolderId??null);
+    return this.getKnowledgeObject(id);
+  }
+  getKnowledgeObject(id: string) { const row=this.db.prepare("SELECT * FROM knowledge_objects WHERE id=?").get(id) as DbRow|undefined; if(!row)throw notFound("Knowledge Object"); return mapKnowledgeObject(row); }
+  listKnowledgeObjects(filters: KnowledgeFilters) {
+    this.getProject(filters.projectId);
+    return (this.db.prepare("SELECT * FROM knowledge_objects WHERE project_id=? ORDER BY updated_at DESC, title").all(filters.projectId) as DbRow[]).map(mapKnowledgeObject).filter(item=>(!filters.status||item.status===filters.status)&&(!filters.type||item.type===filters.type));
+  }
+  updateKnowledgeObject(id: string, changes: UpdateKnowledgeObjectInput) {
+    const item=this.getKnowledgeObject(id); if(changes.type)assertOneOf(changes.type,KNOWLEDGE_TYPES,"knowledge type"); if(changes.confidence)assertOneOf(changes.confidence,CONFIDENCE_LEVELS,"confidence");
+    if(changes.parentFolderId){const folder=this.getFolder(changes.parentFolderId);if(folder.projectId!==item.projectId)throw invalidMove("Knowledge cannot be assigned to a folder in another project.");}
+    this.db.prepare("UPDATE knowledge_objects SET type=?, title=?, body=?, confidence=?, parent_folder_id=?, updated_at=? WHERE id=?").run(changes.type??item.type,changes.title??item.title,changes.body??item.body,changes.confidence??item.confidence,changes.parentFolderId===undefined?item.parentFolderId:changes.parentFolderId,now(),id);
+    return this.getKnowledgeObject(id);
+  }
+  setKnowledgeStatus(id: string, status: KnowledgeStatus) { this.getKnowledgeObject(id); assertOneOf(status,KNOWLEDGE_STATUSES,"knowledge status"); this.db.prepare("UPDATE knowledge_objects SET status=?, updated_at=? WHERE id=?").run(status,now(),id); return this.getKnowledgeObject(id); }
+  searchKnowledge(input: KnowledgeSearchInput) {
+    const needle=input.query.toLowerCase();
+    const projects=input.projectId?[this.getProject(input.projectId)]:this.listProjects({status:"active"});
+    const results=projects.flatMap(project=>this.listKnowledgeObjects({projectId:project.id}).filter(item=>(!input.status||item.status===input.status)&&(!input.type||item.type===input.type)&&(item.title.toLowerCase().includes(needle)||item.body.toLowerCase().includes(needle)||item.type.includes(needle)||item.status.includes(needle))));
+    return results.slice(0,input.limit??30);
+  }
+  attachEvidence(input: CreateEvidenceSourceInput) {
+    const knowledge=this.getKnowledgeObject(input.knowledgeObjectId); if(knowledge.projectId!==input.projectId)throw invalidMove("Evidence and knowledge must belong to the same project.");
+    assertOneOf(input.sourceType,EVIDENCE_TYPES,"evidence source type"); assertOneOf(input.confidence,CONFIDENCE_LEVELS,"confidence");
+    if(input.sourceType==="document"||input.sourceType==="file"){if(!input.sourceId)throw new VaultDomainError("VALIDATION_ERROR","Choose a source file.","sourceId");const document=this.getDocument(input.sourceId);if(document.projectId!==input.projectId)throw invalidMove("Evidence cannot reference a file from another project.");if(input.sourceType==="file"&&document.kind!=="file")throw new VaultDomainError("VALIDATION_ERROR","Choose an imported source file.","sourceId");}
+    const id=entityId(), timestamp=now();
+    this.db.prepare("INSERT INTO evidence_sources VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'available', ?)").run(id,input.projectId,input.knowledgeObjectId,input.sourceType,input.sourceId,input.sourcePath,input.excerpt,input.locator,input.confidence,timestamp);
+    return this.listEvidence(input.knowledgeObjectId).find(item=>item.id===id)!;
+  }
+  listEvidence(knowledgeObjectId: string) { this.getKnowledgeObject(knowledgeObjectId); return (this.db.prepare("SELECT * FROM evidence_sources WHERE knowledge_object_id=? ORDER BY created_at DESC").all(knowledgeObjectId) as DbRow[]).map(mapEvidenceSource).map(item=>this.withEvidenceAvailability(item)); }
+  private withEvidenceAvailability(evidence:EvidenceSource):EvidenceSource{if((evidence.sourceType==="document"||evidence.sourceType==="file")&&evidence.sourceId){try{return{...evidence,availability:this.getDocument(evidence.sourceId).availability};}catch{return{...evidence,availability:"missing"};}}return evidence;}
+  createRelationship(input:CreateRelationshipInput){
+    assertOneOf(input.sourceType,RELATIONSHIP_ENDPOINT_TYPES,"relationship source type");assertOneOf(input.targetType,RELATIONSHIP_ENDPOINT_TYPES,"relationship target type");assertOneOf(input.relationshipType,RELATIONSHIP_TYPES,"relationship type");
+    if(input.sourceType===input.targetType&&input.sourceId===input.targetId)throw new VaultDomainError("VALIDATION_ERROR","An entity cannot relate to itself.");
+    const sourceProject=this.entityProjectId(input.sourceType,input.sourceId),targetProject=this.entityProjectId(input.targetType,input.targetId);
+    if(sourceProject!==input.projectId||targetProject!==input.projectId)throw invalidMove("Relationships cannot cross project boundaries.");
+    const existing=this.db.prepare("SELECT 1 FROM relationships WHERE project_id=? AND source_type=? AND source_id=? AND target_type=? AND target_id=? AND relationship_type=?").get(input.projectId,input.sourceType,input.sourceId,input.targetType,input.targetId,input.relationshipType);
+    if(existing)throw duplicate("That relationship already exists.");
+    const id=entityId();this.db.prepare("INSERT INTO relationships VALUES (?, ?, ?, ?, ?, ?, ?, 'user', ?)").run(id,input.projectId,input.sourceType,input.sourceId,input.targetType,input.targetId,input.relationshipType,now());
+    return mapRelationship(this.db.prepare("SELECT * FROM relationships WHERE id=?").get(id) as DbRow);
+  }
+  listRelationships(filters:RelationshipFilters){this.getProject(filters.projectId);const rows=(this.db.prepare("SELECT * FROM relationships WHERE project_id=? ORDER BY created_at DESC").all(filters.projectId) as DbRow[]).map(mapRelationship);if(!filters.entityType||!filters.entityId)return rows;return rows.filter(item=>(item.sourceType===filters.entityType&&item.sourceId===filters.entityId)||(item.targetType===filters.entityType&&item.targetId===filters.entityId));}
+  removeRelationship(id:string){const row=this.db.prepare("SELECT id FROM relationships WHERE id=?").get(id) as {id:string}|undefined;if(!row)throw notFound("Relationship");this.db.prepare("DELETE FROM relationships WHERE id=?").run(id);return{id};}
+  private entityProjectId(type:RelationshipEndpointType,id:string){if(type==="project")return this.getProject(id).id;if(type==="folder")return this.getFolder(id).projectId;if(type==="document")return this.getDocument(id).projectId;return this.getKnowledgeObject(id).projectId;}
 
   snapshot(): VaultSnapshot {
     const projects = this.listProjects({ status: "active" });
     const projectIds = new Set(projects.map(project => project.id));
     const folders = (this.db.prepare("SELECT * FROM folders WHERE status='active' ORDER BY relative_path").all() as DbRow[]).map(mapFolder).filter(folder => projectIds.has(folder.projectId));
     const folderIds = new Set(folders.map(folder => folder.id));
-    const documents = (this.db.prepare("SELECT * FROM documents WHERE status='active' ORDER BY relative_path").all() as DbRow[]).map(mapDocument).filter(document => projectIds.has(document.projectId) && (!document.parentFolderId || folderIds.has(document.parentFolderId)));
+    const documents = (this.db.prepare("SELECT * FROM documents WHERE status='active' ORDER BY relative_path").all() as DbRow[]).map(mapDocument).map(item=>this.withAvailability(item)).filter(document => projectIds.has(document.projectId) && (!document.parentFolderId || folderIds.has(document.parentFolderId)));
+    const knowledgeObjects=(this.db.prepare("SELECT * FROM knowledge_objects WHERE status<>'archived' ORDER BY updated_at DESC").all() as DbRow[]).map(mapKnowledgeObject).filter(item=>projectIds.has(item.projectId));
+    const knowledgeIds=new Set(knowledgeObjects.map(item=>item.id));
+    const evidenceSources=(this.db.prepare("SELECT * FROM evidence_sources ORDER BY created_at DESC").all() as DbRow[]).map(mapEvidenceSource).map(item=>this.withEvidenceAvailability(item)).filter(item=>knowledgeIds.has(item.knowledgeObjectId));
+    const relationships=(this.db.prepare("SELECT * FROM relationships ORDER BY created_at DESC").all() as DbRow[]).map(mapRelationship).filter(item=>projectIds.has(item.projectId));
+    const firstDocumentEvidence=new Map<string,string>(); for(const evidence of evidenceSources)if(evidence.sourceType==="document"&&evidence.sourceId&&!firstDocumentEvidence.has(evidence.knowledgeObjectId)&&documents.some(item=>item.id===evidence.sourceId))firstDocumentEvidence.set(evidence.knowledgeObjectId,evidence.sourceId);
     const atlasNodes = [
       { id: "vault-root", name: basename(this.options.vaultRoot), type: "vault" as const, parentId: null, projectId: null, path: this.options.vaultRoot },
       ...projects.map(project => ({ id: project.id, name: project.name, type: "project" as const, parentId: "vault-root", projectId: project.id, path: project.name })),
       ...folders.map(folder => ({ id: folder.id, name: folder.name, type: "folder" as const, parentId: folder.parentFolderId ?? folder.projectId, projectId: folder.projectId, path: folder.relativePath })),
       ...documents.map(document => ({ id: document.id, name: document.title, type: "file" as const, parentId: document.parentFolderId ?? document.projectId, projectId: document.projectId, path: document.relativePath })),
+      ...knowledgeObjects.map(item => ({ id: item.id, name: item.title, type: "knowledge" as const, parentId: (item.parentFolderId&&folderIds.has(item.parentFolderId)?item.parentFolderId:null)??firstDocumentEvidence.get(item.id)??item.projectId, projectId: item.projectId, path: `${item.parentFolderId?snapshotFolderPath(folders,item.parentFolderId)+" / ":"Knowledge / "}${item.type} / ${item.title}` })),
     ];
-    return { vaultName: basename(this.options.vaultRoot), projects, folders, documents, atlasNodes };
+    return { vaultName: basename(this.options.vaultRoot), projects, folders, documents, knowledgeObjects, evidenceSources, relationships, atlasNodes };
   }
   search(input: SearchInput): SearchResult[] {
     const needle = input.query.toLowerCase(), limit = input.limit ?? 30, results: SearchResult[] = [];
@@ -180,10 +310,11 @@ export class SqliteVaultRepository implements VaultRepository {
       if (project.name.toLowerCase().includes(needle)) results.push({ id: project.id, entityType: "project", projectId: project.id, projectName: project.name, title: project.name, path: project.name, excerpt: project.description });
       for (const folder of this.listProjectFolders(project.id).filter(folder => folder.status === "active")) if (folder.name.toLowerCase().includes(needle)) results.push({ id: folder.id, entityType: "folder", projectId: project.id, projectName: project.name, title: folder.name, path: `${project.name} / ${folder.relativePath}`, excerpt: null });
       for (const document of this.listProjectDocuments(project.id).filter(document => document.status === "active")) {
-        let content = ""; try { content = document.kind === "markdown" ? this.readMarkdownContent(document.id) : ""; } catch { content = ""; }
+        let content = ""; try { content = this.readSearchableContent(document); } catch { content = ""; }
         const contentIndex = content.toLowerCase().indexOf(needle);
         if (document.title.toLowerCase().includes(needle) || contentIndex >= 0) results.push({ id: document.id, entityType: "document", projectId: project.id, projectName: project.name, title: document.title, path: `${project.name} / ${document.relativePath}`, excerpt: contentIndex >= 0 ? content.slice(Math.max(0, contentIndex - 45), contentIndex + needle.length + 75).replace(/\s+/g, " ") : null });
       }
+      for(const item of this.listKnowledgeObjects({projectId:project.id}).filter(item=>item.status!=="archived")){const index=item.body.toLowerCase().indexOf(needle);if(item.title.toLowerCase().includes(needle)||index>=0)results.push({id:item.id,entityType:"knowledge",projectId:project.id,projectName:project.name,title:item.title,path:`${project.name} / Knowledge / ${item.type}`,excerpt:index>=0?item.body.slice(Math.max(0,index-45),index+needle.length+75):null});}
     }
     return results.slice(0, limit);
   }
@@ -219,8 +350,9 @@ export class SqliteVaultRepository implements VaultRepository {
     this.close(); rmSync(this.options.vaultRoot, { recursive: true, force: true }); this.initialize(); return this.snapshot();
   }
 
-  private projectFilesPath(projectId: string) { return safeResolve(this.options.vaultRoot, join("projects", projectId, "files")); }
+  private projectFilesPath(projectId: string) { const project=this.getProject(projectId);return safeResolve(join(this.options.vaultRoot,"projects"),...project.storagePath.split("/")); }
   private contentPath(projectId: string, relativePath: string) { return safeResolve(this.projectFilesPath(projectId), ...relativePath.split("/")); }
+  private readSearchableContent(document:DocumentFile){const path=this.contentPath(document.projectId,document.relativePath);if(!existsSync(path))return"";if(!SEARCHABLE_EXTENSIONS.has(extname(document.title).toLowerCase())||statSync(path).size>2_000_000)return"";return readFileSync(path,"utf8");}
   private uniqueProjectName(base: string, excludeId?: string) { return uniqueName(base, name => Boolean(this.db.prepare("SELECT 1 FROM projects WHERE lower(name)=lower(?) AND id<>?").get(name, excludeId ?? ""))); }
   private uniqueFolderName(projectId: string, parentId: string | null, base: string, excludeId?: string) { return uniqueName(base, name => Boolean(this.db.prepare("SELECT 1 FROM folders WHERE project_id=? AND parent_folder_id IS ? AND lower(name)=lower(?) AND id<>?").get(projectId, parentId, name, excludeId ?? ""))); }
   private uniqueDocumentTitle(projectId: string, parentId: string | null, base: string, excludeId?: string) { return uniqueFileName(base, name => Boolean(this.db.prepare("SELECT 1 FROM documents WHERE project_id=? AND parent_folder_id IS ? AND lower(title)=lower(?) AND id<>?").get(projectId, parentId, name, excludeId ?? ""))); }
@@ -237,8 +369,23 @@ const atomicWrite = (path: string, content: string) => { mkdirSync(dirname(path)
 const notFound = (entity: string) => new VaultDomainError("NOT_FOUND", `${entity} was not found.`);
 const duplicate = (message: string) => new VaultDomainError("DUPLICATE", message);
 const invalidMove = (message: string) => new VaultDomainError("INVALID_MOVE", message);
-const mapProject = (row: DbRow): Project => ({ id: row.id!, name: row.name!, description: row.description, icon: row.icon, color: row.color, status: row.status as EntityStatus, createdAt: row.created_at!, updatedAt: row.updated_at! });
+const KNOWLEDGE_TYPES = ["fact","decision","goal","question","idea","preference"] as const;
+const KNOWLEDGE_STATUSES = ["draft","approved","superseded","archived"] as const;
+const CONFIDENCE_LEVELS = ["low","medium","high","verified"] as const;
+const EVIDENCE_TYPES = ["document","file","url","conversation","image","pdf","manual_note"] as const;
+const RELATIONSHIP_ENDPOINT_TYPES = ["project","folder","document","knowledge"] as const;
+const RELATIONSHIP_TYPES = ["supports","references","contradicts","answers","depends_on","blocks","implements","duplicates","derived_from","belongs_to"] as const;
+const assertOneOf = <T extends string>(value:string, allowed:readonly T[], label:string):T => { if(!allowed.includes(value as T))throw new VaultDomainError("VALIDATION_ERROR",`Invalid ${label}.`);return value as T; };
+const mapProject = (row: DbRow): Project => ({ id: row.id!, name: row.name!, storagePath:row.storage_path??`${row.id}/files`, description: row.description, icon: row.icon, color: row.color, status: row.status as EntityStatus, createdAt: row.created_at!, updatedAt: row.updated_at! });
 const mapFolder = (row: DbRow): Folder => ({ id: row.id!, projectId: row.project_id!, parentFolderId: row.parent_folder_id, name: row.name!, relativePath: row.relative_path!, status: row.status as EntityStatus, createdAt: row.created_at!, updatedAt: row.updated_at! });
-const mapDocument = (row: DbRow): DocumentFile => ({ id: row.id!, projectId: row.project_id!, parentFolderId: row.parent_folder_id, title: row.title!, kind: row.kind as "markdown" | "file", relativePath: row.relative_path!, mimeType: row.mime_type, status: row.status as EntityStatus, createdAt: row.created_at!, updatedAt: row.updated_at! });
+const mapDocument = (row: DbRow): DocumentFile => ({ id: row.id!, projectId: row.project_id!, parentFolderId: row.parent_folder_id, title: row.title!, kind: row.kind as "markdown" | "file", relativePath: row.relative_path!, mimeType: row.mime_type, availability:"available", status: row.status as EntityStatus, createdAt: row.created_at!, updatedAt: row.updated_at! });
+const mapKnowledgeObject = (row:DbRow):KnowledgeObject => ({id:row.id!,projectId:row.project_id!,parentFolderId:row.parent_folder_id,type:row.type as KnowledgeObject["type"],title:row.title!,body:row.body!,status:row.status as KnowledgeStatus,confidence:row.confidence as KnowledgeConfidence,author:row.author as KnowledgeObject["author"],createdAt:row.created_at!,updatedAt:row.updated_at!});
+const mapEvidenceSource = (row:DbRow):EvidenceSource => ({id:row.id!,projectId:row.project_id!,knowledgeObjectId:row.knowledge_object_id!,sourceType:row.source_type as EvidenceSource["sourceType"],sourceId:row.source_id,sourcePath:row.source_path,excerpt:row.excerpt,locator:row.locator,confidence:row.confidence as KnowledgeConfidence,availability:row.availability as EvidenceSource["availability"],createdAt:row.created_at!});
+const mapRelationship = (row:DbRow):Relationship => ({id:row.id!,projectId:row.project_id!,sourceType:row.source_type as RelationshipEndpointType,sourceId:row.source_id!,targetType:row.target_type as RelationshipEndpointType,targetId:row.target_id!,relationshipType:row.relationship_type as RelationshipType,author:row.author as Relationship["author"],createdAt:row.created_at!});
+const snapshotFolderPath=(folders:Folder[],id:string)=>folders.find(item=>item.id===id)?.relativePath??"Knowledge";
+const SEARCHABLE_EXTENSIONS=new Set([".md",".txt",".json",".csv",".tsv",".js",".jsx",".ts",".tsx",".css",".html",".xml",".yaml",".yml",".toml",".ini",".log",".py",".java",".c",".h",".cpp",".cs",".go",".rs",".sql",".sh",".ps1"]);
+const mimeFor=(name:string)=>({".pdf":"application/pdf",".png":"image/png",".jpg":"image/jpeg",".jpeg":"image/jpeg",".gif":"image/gif",".svg":"image/svg+xml",".txt":"text/plain",".json":"application/json",".csv":"text/csv",".md":"text/markdown"}[extname(name).toLowerCase()]??"application/octet-stream");
+const IGNORED_DIRECTORIES=new Set([".git",".svn",".hg","node_modules",".pnpm-store","dist","build","out","target","coverage",".next",".nuxt",".cache",".turbo",".parcel-cache","__pycache__",".venv","venv"]);
+const IGNORED_FILES=new Set(["vault.db","vault.db-shm","vault.db-wal","thumbs.db",".ds_store"]);
 
 export const __testing = { safeResolve, atomicWrite, MIGRATIONS };

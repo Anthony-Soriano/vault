@@ -1,6 +1,6 @@
 # Orbit Vault Architecture
 
-Status: **Canonical product contract with Phase 1 persistence implemented**
+Status: **Phase 1 foundation complete; Phase 2.3 managed source files implemented**
 
 ## Phase 1 implementation
 
@@ -72,13 +72,13 @@ Minimum fields:
 - `type`
 - `title`
 - `body`
-- `status` (`proposed`, `approved`, `rejected`, `superseded`, `archived`)
+- `status` (`draft`, `approved`, `superseded`, `archived`)
 - `confidence`
-- `origin` (`user`, `model`, `import`)
+- `author` (`user`; `ai` is reserved for a later phase)
 - `created_at`
 - `updated_at`
 
-Model-created knowledge begins as `proposed`. Only an explicit user action promotes it into approved project memory.
+Nothing becomes canonical automatically. Future model-created knowledge must begin as `draft`; only an explicit user action promotes it into approved project memory.
 
 ### Relationship
 
@@ -86,14 +86,16 @@ A typed, directed connection between two entities.
 
 Example types:
 
-- links-to
 - supports
+- references
 - contradicts
-- supersedes
-- depends-on
-- relates-to
-- belongs-to
-- derived-from
+- answers
+- depends_on
+- blocks
+- implements
+- duplicates
+- derived_from
+- belongs_to
 
 Minimum fields:
 
@@ -122,7 +124,10 @@ Minimum fields:
 - `source_type`
 - `source_id`
 - `locator` (page, line range, block, timestamp, or message)
+- `excerpt`
 - `excerpt_hash`
+- `confidence`
+- `availability`
 - `created_at`
 
 Evidence should point to the smallest stable source location available. Display excerpts are conveniences; they do not replace the underlying source reference.
@@ -152,22 +157,53 @@ Graph interactions never become the primary way of organizing information.
 
 The graph should become more informative as the underlying knowledge becomes richer—not through artificial visual complexity.
 
-## Derived V1 capabilities
+## Phase 2 contract: canonical knowledge foundation
 
-The canonical entities support:
+Phase 1 built a local file system. Phase 2 builds a local knowledge system. Phase 3 teaches AI how to use that knowledge.
 
-- project-scoped assistant conversations
-- citations and evidence trails
-- backlinks and related material
-- memory inspection and approval
-- decision logs
-- goals and open questions
-- AI tag proposals
-- document, folder, and project summaries
-- Project DNA
-- knowledge drift detection
-- recent activity
-- graph visualization
+Phase 2 must remain excellent with every language model disconnected. Users create, organize, inspect, edit, approve, archive, merge, and link knowledge manually. AI generation is not required and must not be introduced as part of this phase.
+
+### Core interfaces
+
+- **Knowledge Inspector** — details, status, confidence, relationships, evidence, backlinks, and history
+- **Decision Log** — chronological project decisions with evidence, related goals, and affected files
+- **Goals** — open, in-progress, completed, and archived project goals
+- **Open Questions** — questions without an accepted answer
+- **Evidence Viewer** — the exact source and location supporting an object
+- **Backlinks** — incoming, outgoing, and connected knowledge
+- **Relationship Viewer** — user-controlled typed connections
+- **Knowledge Search** — title, body, type, status, and relationship type
+
+### Deterministic integrity checks
+
+Phase 2 checks concrete state without AI:
+
+- possible duplicate knowledge
+- conflicting decisions
+- goals with incompatible statuses
+- contradictory preferences
+- unanswered questions
+- missing evidence
+- orphaned objects with neither evidence nor relationships
+
+Semantic drift detection is deferred until AI exists. Phase 2 does not attempt to infer that one document subtly contradicts another.
+
+### Atlas integration
+
+Atlas may add Knowledge Objects as a distinct optional node layer beneath Documents. Relationship overlays remain optional. Atlas continues to derive its entire view from canonical entities and never becomes an organizing database.
+
+### Completion criteria
+
+Phase 2 is complete when, without AI, a user can:
+
+1. Create, edit, approve, supersede, archive, and delete Knowledge Objects.
+2. Merge duplicates while preserving traceable history.
+3. Connect entities with typed relationships.
+4. Attach and inspect evidence with stable source locations.
+5. Browse backlinks, decisions, goals, and open questions.
+6. Search knowledge independently from documents.
+7. Navigate knowledge through Atlas.
+8. Review deterministic integrity warnings.
 
 ## Project DNA
 
@@ -185,7 +221,7 @@ Project DNA is a regenerable projection of approved project state. It includes:
 
 It must retain evidence references for every generated section. Users may correct its underlying knowledge, but Project DNA should not become a second manually maintained source of truth.
 
-## Candidate-knowledge workflow
+## Future AI proposal workflow (Phase 3)
 
 1. New or changed source material is indexed.
 2. A model may extract candidate knowledge.
@@ -197,9 +233,26 @@ It must retain evidence references for every generated section. Users may correc
 
 ## Next engineering milestone
 
-Phase 2 may introduce proposed knowledge objects and evidence references through new repository and IPC methods. It must not bypass the Phase 1 service boundary or allow model output to mutate approved state silently.
-4. Approve or reject the proposal.
-5. Query approved project knowledge through an internal service boundary.
-6. Render Files and Graph views from the same stored entities and relationships.
+Before Phase 2 implementation, finish the `v0.1.3` packaging and migration checkpoint. Then implement the manual canonical entities, repositories, migrations, and typed IPC methods without adding model-provider code.
 
-This slice proves the product architecture before expanding the interface or adding model-provider integrations.
+The first Phase 2 vertical slice now supports:
+
+1. Create one user-authored draft Knowledge Object.
+2. Attach evidence from a Document.
+3. Approve it explicitly.
+4. Find it through independent knowledge search.
+5. Render it in the Knowledge Inspector and optional Atlas knowledge layer.
+
+Phase 2.1 adds the canonical `Relationship` repository and secure IPC surface. A user can create typed project-scoped links from a Knowledge Object to another Knowledge Object or Document, inspect incoming backlinks and outgoing links in the Knowledge Inspector, follow those targets, and remove links.
+
+The Phase 2.1 follow-up adds an optional `parentFolderId` to Knowledge Objects. Folder placement is organizational metadata inside the existing Project boundary: moving or unfiling knowledge never changes its identity, evidence, relationships, or approval status. Atlas derives the displayed parent from this canonical assignment and falls back to evidence or the Project when no active folder assignment exists.
+
+Phase 2.2 adds optional Atlas overlays for the same canonical Relationships. Solid edges remain structural hierarchy; dashed colored curves represent typed semantic links. Connections and Knowledge are independently toggleable, hidden or collapsed endpoints do not leak edges, and enabling an overlay never changes node positions or persistent state. The next slice is Phase 2.3 general source-file support.
+
+Phase 2.3 promotes imported attachments into the existing canonical `Document/File` entity rather than creating a parallel attachment model. Import copies user-selected files into `projects/<project-id>/files/` beneath the chosen folder; the external original is never moved or modified. Main-process IPC owns native dialogs, open, and reveal operations. Supported text-like formats up to 2 MB participate in lexical search, while binary formats remain discoverable by title and path. A missing managed file is reported as unavailable but retains identity, relationships, and evidence provenance. External filesystem watching, PDF/image text extraction, and AI interpretation remain deferred.
+
+Vault initialization is explicit about filesystem ownership. Selecting an empty folder through Open Vault initializes it directly. Selecting a non-empty folder without `vault.db` requires confirmation before adding the root `vault.db`, `projects/`, and `backups/` entries. Existing contents are neither modified nor indexed until the user deliberately imports selected files.
+
+The reconciliation layer supports a second, in-place workflow: an ordinary top-level folder placed under `projects/` becomes a canonical Project on the next Vault open or **Refresh from Disk**. Migration 5 records each Project's relative storage path, preserving existing UUID-managed `id/files` projects while allowing human-readable in-place project roots. Reconciliation registers nested folders and files, reads content from disk, reports missing documents, ignores generated trees, rejects symlink traversal, and caps a scan at 25,000 visited entries per project. It does not yet infer identity across external renames or run a continuous watcher.
+
+Large Atlas projections use progressive disclosure rather than changing the canonical graph. Root folders start collapsed and a visible-depth limit controls rendering only. Expanding a branch or focusing a search result reveals canonical descendants without mutating Vault state. Live motion applies spatially bounded repulsion and damped hierarchy springs around deterministic layout targets; manual offsets remain session-only and Reset restores calculated positions.

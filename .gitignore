@@ -86,3 +86,22 @@ Desktop.ini
 .cache/
 outputs/
 work/
+
+# Legacy web/Sites prototype material (not part of the Electron + pnpm workspace)
+.openai/
+app/
+build/
+db/
+drizzle/
+examples/
+public/
+worker/
+drizzle.config.ts
+eslint.config.mjs
+next.config.ts
+package-lock.json
+postcss.config.mjs
+tsconfig.json
+vite.config.ts
+tests/rendered-html.test.mjs
+apps/vault-desktop/renderer/src/demoVault.ts

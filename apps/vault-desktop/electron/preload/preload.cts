@@ -16,6 +16,7 @@ const vaultApi: VaultRendererApi = {
     state: () => call("vault:lifecycle:state"), create: () => call("vault:lifecycle:create"),
     open: () => call("vault:lifecycle:open"), switch: (path) => call("vault:lifecycle:switch", path),
   },
+  filesystem: { reconcile: () => call("vault:filesystem:reconcile"), openProjectsFolder: () => call("vault:filesystem:open-projects-folder") },
   projects: {
     list: (filters) => call("vault:projects:list", filters), create: (input) => call("vault:projects:create", input),
     update: (id, changes) => call("vault:projects:update", id, changes), archive: (id) => call("vault:projects:archive", id),
@@ -28,9 +29,23 @@ const vaultApi: VaultRendererApi = {
   },
   documents: {
     list: (projectId) => call("vault:documents:list", projectId), createMarkdown: (input) => call("vault:documents:create-markdown", input),
+    importFiles: (input) => call("vault:documents:import-files", input),
     read: (id) => call("vault:documents:read", id), updateContent: (id, content) => call("vault:documents:update-content", id, content),
     rename: (id, title) => call("vault:documents:rename", id, title), move: (id, parentId) => call("vault:documents:move", id, parentId),
     archive: (id) => call("vault:documents:archive", id), restore: (id) => call("vault:documents:restore", id), trash: (id) => call("vault:documents:trash", id),
+    open: (id) => call("vault:documents:open", id), reveal: (id) => call("vault:documents:reveal", id),
+  },
+  knowledge: {
+    list: (filters) => call("vault:knowledge:list", filters), create: (input) => call("vault:knowledge:create", input),
+    update: (id, changes) => call("vault:knowledge:update", id, changes), approve: (id) => call("vault:knowledge:approve", id),
+    archive: (id) => call("vault:knowledge:archive", id), search: (input) => call("vault:knowledge:search", input),
+  },
+  evidence: {
+    list: (knowledgeObjectId) => call("vault:evidence:list", knowledgeObjectId), attach: (input) => call("vault:evidence:attach", input),
+  },
+  relationships: {
+    list: (filters) => call("vault:relationships:list", filters), create: (input) => call("vault:relationships:create", input),
+    remove: (id) => call("vault:relationships:remove", id),
   },
   search: { query: (input) => call("vault:search", input) },
   development: { seed: () => call("vault:development:seed"), reset: () => call("vault:development:reset") },
