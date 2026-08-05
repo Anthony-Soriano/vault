@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import IntegrityView from "./IntegrityView";
 import type {
   ApiResult,
   EvidenceSource,
@@ -46,7 +47,7 @@ type Props = {
   onError: (reason: unknown) => void;
   onOpenDocument: (id: string) => void;
 };
-type KnowledgeMode = "active" | "history";
+type KnowledgeMode = "active" | "history" | "integrity";
 type LifecyclePending = "approve" | "archive" | "restore" | "supersede" | "preview" | "merge" | null;
 type LifecycleModal = { kind: "supersede"; sourceId: string } | { kind: "merge"; targetId: string } | null;
 
@@ -104,6 +105,11 @@ export default function KnowledgeView({ snapshot, project, selectedId, onSelecte
   selectedKnowledgeIdRef.current = selected?.id ?? null;
   const evidence = selected && evidenceState.knowledgeObjectId === selected.id ? evidenceState.items : [];
   const activeCandidates = activeKnowledge.filter(item => item.status === "draft" || item.status === "approved");
+  const knowledgeById = useMemo(() => new Map(allKnowledge.map(item => [item.id, item])), [allKnowledge]);
+  const inspectFromIntegrity = useCallback((id: string) => { setMode("active"); onSelected(id); }, [onSelected]);
+  const mergePairFromIntegrity = useCallback((targetId: string, sourceId: string) => {
+    setMode("active"); onSelected(targetId); setMergeSourceIds([sourceId]); setModal({ kind: "merge", targetId });
+  }, [onSelected]);
   const mergeSnapshotKey = useMemo(() => {
     if (modal?.kind !== "merge") return null;
     return [modal.targetId, ...mergeSourceIds]
@@ -564,6 +570,7 @@ export default function KnowledgeView({ snapshot, project, selectedId, onSelecte
       <div className="knowledge-mode-switch" aria-label="Knowledge list mode">
         <button className={mode === "active" ? "active" : ""} aria-pressed={mode === "active"} onClick={() => changeMode("active")}>Active</button>
         <button className={mode === "history" ? "active" : ""} aria-pressed={mode === "history"} onClick={() => changeMode("history")}>History</button>
+        <button className={mode === "integrity" ? "active" : ""} aria-pressed={mode === "integrity"} onClick={() => changeMode("integrity")}>Integrity</button>
       </div>
       <input className="knowledge-search" value={query} onChange={event => setQuery(event.target.value)} placeholder={mode === "history" ? "Search active and historical knowledge…" : "Search knowledge…"} />
       <div className="knowledge-items">
@@ -576,7 +583,8 @@ export default function KnowledgeView({ snapshot, project, selectedId, onSelecte
       </div>
     </aside>
     <section className="knowledge-inspector">
-      {creating ? <>
+      {mode === "integrity" ? <IntegrityView projectId={project.id} knowledgeById={knowledgeById} onError={onError} onInspect={inspectFromIntegrity} onMergePair={mergePairFromIntegrity} onAttachEvidence={inspectFromIntegrity} />
+      : creating ? <>
         <InspectorHeader title="New draft" status="draft" />
         <KnowledgeForm title={title} body={body} type={type} confidence={confidence} parentFolderId={parentFolderId} folders={folders} setTitle={setTitle} setBody={setBody} setType={setType} setConfidence={setConfidence} setParentFolderId={setParentFolderId} />
         <div className="inspector-actions"><button onClick={() => setCreating(false)}>Cancel</button><button className="primary" disabled={!title.trim() || !body.trim()} onClick={() => void create()}>Create draft</button></div>

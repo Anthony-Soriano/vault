@@ -53,3 +53,22 @@ body>.lifecycle-backdrop{z-index:1000}
 
 @media(max-width:800px){.knowledge-layout{grid-template-columns:250px minmax(0,1fr)}.knowledge-inspector{padding:22px 20px}.history-event-head{align-items:flex-start;flex-direction:column;gap:2px}.lifecycle-modal{max-height:calc(100vh - 20px)}}
 @media(max-width:620px){.knowledge-layout{grid-template-columns:210px minmax(0,1fr)}.knowledge-heading{align-items:flex-start}.knowledge-heading button{padding:5px 7px}.knowledge-inspector{padding:18px 14px}.knowledge-fields,.merge-preview-grid,.merge-conflicts{grid-template-columns:1fr}.history-change{grid-template-columns:1fr}.history-change i{transform:rotate(90deg);justify-self:center}.lifecycle-modal{width:calc(100vw - 20px);padding:17px}.lifecycle-modal-actions{bottom:-17px;margin:18px -17px -17px;padding:12px 17px}.merge-preview li{grid-template-columns:1fr}.knowledge-history{margin-top:26px}}
+
+.integrity-view{display:grid;gap:16px;padding:4px 2px}
+.integrity-summary{display:flex;justify-content:space-between;align-items:center;gap:12px;padding-bottom:12px;border-bottom:1px solid #30323e}
+.integrity-summary b{font-size:16px}.integrity-summary small{margin-left:10px;color:#8c91a3}
+.integrity-summary-actions{display:flex;align-items:center;gap:12px}
+.integrity-summary-actions button{border:1px solid #414656;border-radius:7px;background:#292d3a;color:#d8dbe5;padding:7px 12px;cursor:pointer}
+.integrity-summary-actions button:disabled{opacity:.5;cursor:not-allowed}
+.integrity-empty{margin:24px 0;color:#8c91a3}
+.integrity-group{display:grid;gap:8px}
+.integrity-group h3{display:flex;justify-content:space-between;margin:0 0 2px;color:#cfd3dd;font-size:12px;text-transform:uppercase;letter-spacing:.08em}
+.integrity-group h3 span{color:#aebfff;font-variant-numeric:tabular-nums}
+.integrity-finding{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:12px;padding:11px 13px;border:1px solid #343744;border-radius:8px;background:#1a1b23}
+.integrity-finding.error{border-color:#75444b}
+.integrity-severity{font-size:10px;text-transform:uppercase;letter-spacing:.06em;padding:3px 7px;border-radius:5px}
+.integrity-severity.error{background:#2d2024;color:#efb3ba}
+.integrity-severity.warning{background:#24221d;color:#efc477}
+.integrity-finding-body{min-width:0}.integrity-finding-body p{margin:0;color:#e6e8ef}.integrity-finding-body small{color:#8c91a3}
+.integrity-finding button.link{border:0;background:transparent;color:#aebfff;cursor:pointer;font-size:13px}
+.integrity-finding button.link:hover{text-decoration:underline}

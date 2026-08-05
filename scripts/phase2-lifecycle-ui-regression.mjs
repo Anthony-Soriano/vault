@@ -9,6 +9,7 @@ const main = read("apps/vault-desktop/electron/main/main.ts");
 const preload = read("apps/vault-desktop/electron/preload/preload.cts");
 const types = read("packages/vault-types/src/index.ts");
 const renderer = read("apps/vault-desktop/renderer/src/KnowledgeView.tsx");
+const integrity = read("apps/vault-desktop/renderer/src/IntegrityView.tsx");
 const styles = read("apps/vault-desktop/renderer/src/styles.css");
 
 const requireContract = (source, pattern, description) =>
@@ -144,5 +145,18 @@ for (const selector of [".knowledge-history", ".history-operation", ".lifecycle-
   assert.match(styles, new RegExp(selector.replace(".", "\\.")), `Missing lifecycle UI style: ${selector}`);
 }
 assert.match(styles, /body>\.lifecycle-backdrop\{[^}]*z-index:1000/, "Lifecycle portal backdrop must sit above the application shell");
+
+for (const label of ["Active", "History", "Integrity"]) {
+  assert.match(renderer, new RegExp(`>${label}</button>`), `Missing knowledge mode switch label: ${label}`);
+}
+assert.match(renderer, /<IntegrityView/, "KnowledgeView must mount the IntegrityView panel");
+assert.match(renderer, /onMergePair={mergePairFromIntegrity}/, "Integrity duplicate action must reuse the Slice 1 merge flow");
+assert.match(integrity, /\.integrity\.analyze\(/, "IntegrityView must call window.vault.integrity.analyze");
+for (const copy of ["No integrity issues detected", "Missing evidence", "Duplicate candidate", "Unanswered question", "Broken reference", "Orphaned knowledge", "Refresh"]) {
+  assert.match(integrity, new RegExp(copy), `Missing integrity UI copy: ${copy}`);
+}
+for (const selector of [".integrity-view", ".integrity-summary", ".integrity-group", ".integrity-finding"]) {
+  assert.match(styles, new RegExp(selector.replace(".", "\\.")), `Missing integrity UI style: ${selector}`);
+}
 
 console.log("Lifecycle IPC/preload/UI regression checks passed.");
