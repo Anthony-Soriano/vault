@@ -14,6 +14,187 @@ const fixture = () => {
   return { root, service, dispose: () => { service.close(); rmSync(root, { recursive: true, force: true }); } };
 };
 
+const mergeScenario = () => {
+  const ctx=fixture();
+  const project=ctx.service.projects.create({name:"Deterministic merge"});
+  const document=ctx.service.documents.createMarkdown({projectId:project.id,parentFolderId:null,title:"merge-source",content:"# Merge source\n\nCanonical evidence."});
+  const target=ctx.service.knowledge.create({projectId:project.id,type:"decision",title:"Canonical decision",body:"Keep this target text exactly.",confidence:"verified"});
+  const firstSource=ctx.service.knowledge.create({projectId:project.id,type:"fact",title:"First source text",body:"Never combine this body into the target.",confidence:"high"});
+  const secondSource=ctx.service.knowledge.create({projectId:project.id,type:"goal",title:"Second source text",body:"This body also stays separate.",confidence:"medium"});
+  const [sourceAlpha,sourceZulu]=[firstSource,secondSource].sort((left,right)=>left.id.localeCompare(right.id));
+  const firstEvidence=ctx.service.evidence.attach({projectId:project.id,knowledgeObjectId:sourceZulu.id,sourceType:"manual_note",sourceId:null,sourcePath:null,excerpt:"Later evidence",locator:"note-z",confidence:"high"});
+  const secondEvidence=ctx.service.evidence.attach({projectId:project.id,knowledgeObjectId:sourceAlpha.id,sourceType:"document",sourceId:document.id,sourcePath:document.relativePath,excerpt:"Earlier evidence",locator:"Merge source",confidence:"verified"});
+  const existingDuplicate=ctx.service.relationships.create({projectId:project.id,sourceType:"knowledge",sourceId:target.id,targetType:"document",targetId:document.id,relationshipType:"references"});
+  const duplicateWinner=ctx.service.relationships.create({projectId:project.id,sourceType:"knowledge",sourceId:sourceZulu.id,targetType:"document",targetId:document.id,relationshipType:"references"});
+  const duplicateLoser=ctx.service.relationships.create({projectId:project.id,sourceType:"knowledge",sourceId:sourceAlpha.id,targetType:"document",targetId:document.id,relationshipType:"references"});
+  const incoming=ctx.service.relationships.create({projectId:project.id,sourceType:"document",sourceId:document.id,targetType:"knowledge",targetId:sourceZulu.id,relationshipType:"supports"});
+  const outgoing=ctx.service.relationships.create({projectId:project.id,sourceType:"knowledge",sourceId:sourceAlpha.id,targetType:"project",targetId:project.id,relationshipType:"implements"});
+  const selfLink=ctx.service.relationships.create({projectId:project.id,sourceType:"knowledge",sourceId:sourceZulu.id,targetType:"knowledge",targetId:target.id,relationshipType:"duplicates"});
+  const database=new DatabaseSync(join(ctx.root,"vault.db"));
+  const setRelationship=database.prepare("UPDATE relationships SET id=?, author=?, created_at=? WHERE id=?");
+  setRelationship.run("relationship_existing_001","user","2026-08-05T12:06:00.000Z",existingDuplicate.id);
+  setRelationship.run("relationship_duplicate_alpha","ai","2026-08-05T12:01:00.000Z",duplicateWinner.id);
+  setRelationship.run("relationship_duplicate_zulu","user","2026-08-05T12:01:00.000Z",duplicateLoser.id);
+  setRelationship.run("relationship_incoming_001","ai","2026-08-05T12:03:00.000Z",incoming.id);
+  setRelationship.run("relationship_outgoing_001","user","2026-08-05T12:04:00.000Z",outgoing.id);
+  setRelationship.run("relationship_self_001","ai","2026-08-05T12:02:00.000Z",selfLink.id);
+  database.prepare("UPDATE knowledge_evidence_links SET link_id=?, operation_id=?, created_at=? WHERE evidence_source_id=?").run("evidence_link_zulu_001","evidence_operation_zulu_001","2026-08-05T12:08:00.000Z",firstEvidence.id);
+  database.prepare("UPDATE knowledge_evidence_links SET link_id=?, operation_id=?, created_at=? WHERE evidence_source_id=?").run("evidence_link_alpha_001","evidence_operation_alpha_001","2026-08-05T12:07:00.000Z",secondEvidence.id);
+  database.prepare("INSERT INTO knowledge_evidence_links(link_id, knowledge_object_id, evidence_source_id, original_knowledge_object_id, operation_id, created_at) VALUES (?, ?, ?, ?, ?, ?)").run("evidence_link_existing_001",target.id,firstEvidence.id,target.id,"evidence_operation_existing_001","2026-08-05T12:08:00.000Z");
+  database.close();
+  return {ctx,project,document,target,sourceAlpha,sourceZulu,firstEvidence,secondEvidence};
+};
+
+const readMergeState = (root:string) => {
+  const database=new DatabaseSync(join(root,"vault.db"),{readOnly:true});
+  const rows=(sql:string)=>(database.prepare(sql).all() as Record<string,string|null>[]).map(row=>({...row}));
+  const state={
+    objects:rows("SELECT * FROM knowledge_objects ORDER BY id"),
+    evidenceSources:rows("SELECT * FROM evidence_sources ORDER BY id"),
+    evidenceLinks:rows("SELECT * FROM knowledge_evidence_links ORDER BY link_id"),
+    relationships:rows("SELECT * FROM relationships ORDER BY id"),
+    history:rows("SELECT * FROM knowledge_object_history ORDER BY knowledge_object_id, created_at, rowid"),
+  };
+  database.close(); return state;
+};
+
+test("merge preview is deterministic and reports transfers redirects and conflicts", () => {
+  const scenario=mergeScenario(); try {
+    const {service}=scenario.ctx;
+    const input={projectId:scenario.project.id,targetId:scenario.target.id,sourceIds:[scenario.sourceZulu.id,scenario.sourceAlpha.id],reason:" preview only "};
+    const preview=service.knowledge.previewMerge(input);
+    const reversed=service.knowledge.previewMerge({...input,sourceIds:[...input.sourceIds].reverse()});
+    assert.equal(JSON.stringify(preview),JSON.stringify(reversed));
+    assert.deepEqual(preview.target,scenario.target);
+    assert.deepEqual(preview.sources.map(item=>item.id),[scenario.sourceAlpha.id,scenario.sourceZulu.id]);
+    assert.deepEqual(preview.evidenceLinks,[
+      {id:"evidence_link_alpha_001",knowledgeObjectId:scenario.sourceAlpha.id,evidenceSourceId:scenario.secondEvidence.id,originalKnowledgeObjectId:scenario.sourceAlpha.id,operationId:"evidence_operation_alpha_001",createdAt:"2026-08-05T12:07:00.000Z"},
+    ]);
+    assert.deepEqual(preview.redirectedRelationships,[
+      {id:"relationship_duplicate_alpha",projectId:scenario.project.id,sourceType:"knowledge",sourceId:scenario.target.id,targetType:"document",targetId:scenario.document.id,relationshipType:"references",author:"ai",createdAt:"2026-08-05T12:01:00.000Z"},
+      {id:"relationship_duplicate_zulu",projectId:scenario.project.id,sourceType:"knowledge",sourceId:scenario.target.id,targetType:"document",targetId:scenario.document.id,relationshipType:"references",author:"user",createdAt:"2026-08-05T12:01:00.000Z"},
+      {id:"relationship_incoming_001",projectId:scenario.project.id,sourceType:"document",sourceId:scenario.document.id,targetType:"knowledge",targetId:scenario.target.id,relationshipType:"supports",author:"ai",createdAt:"2026-08-05T12:03:00.000Z"},
+      {id:"relationship_outgoing_001",projectId:scenario.project.id,sourceType:"knowledge",sourceId:scenario.target.id,targetType:"project",targetId:scenario.project.id,relationshipType:"implements",author:"user",createdAt:"2026-08-05T12:04:00.000Z"},
+      {id:"relationship_self_001",projectId:scenario.project.id,sourceType:"knowledge",sourceId:scenario.target.id,targetType:"knowledge",targetId:scenario.target.id,relationshipType:"duplicates",author:"ai",createdAt:"2026-08-05T12:02:00.000Z"},
+    ]);
+    assert.deepEqual(preview.conflicts,[
+      {relationshipId:"relationship_duplicate_zulu",resolution:"duplicate_collapsed",retainedRelationshipId:"relationship_duplicate_alpha"},
+      {relationshipId:"relationship_existing_001",resolution:"duplicate_collapsed",retainedRelationshipId:"relationship_duplicate_alpha"},
+      {relationshipId:"relationship_self_001",resolution:"self_link_removed",retainedRelationshipId:null},
+    ]);
+    assert.deepEqual(preview.blockingErrors,[]);
+    assert.equal(preview.target.title,"Canonical decision"); assert.equal(preview.target.body,"Keep this target text exactly.");
+    assert.equal("combinedTitle" in preview,false); assert.equal("combinedBody" in preview,false);
+  } finally { scenario.ctx.dispose(); }
+});
+
+test("merge preserves identity provenance metadata and grouped immutable history", () => {
+  const scenario=mergeScenario(); try {
+    const {service}=scenario.ctx;
+    const setup=new DatabaseSync(join(scenario.ctx.root,"vault.db"));
+    setup.prepare("UPDATE knowledge_objects SET updated_at=? WHERE id=?").run("2026-08-05T11:00:00.000Z",scenario.target.id);
+    setup.close();
+    const before=readMergeState(scenario.ctx.root);
+    const targetBefore=service.knowledge.list({projectId:scenario.project.id}).find(item=>item.id===scenario.target.id)!;
+    const result=service.knowledge.merge({projectId:scenario.project.id,targetId:scenario.target.id,sourceIds:[scenario.sourceZulu.id,scenario.sourceAlpha.id],reason:" consolidate evidence "});
+    assert.match(result.operationId,/^[a-f0-9]{32}$/); assert.notEqual(result.operationId,"");
+    assert.deepEqual({...result.target,updatedAt:targetBefore.updatedAt},targetBefore); assert.notEqual(result.target.updatedAt,targetBefore.updatedAt);
+    assert.deepEqual(result.supersededSources.map(item=>item.id),[scenario.sourceAlpha.id,scenario.sourceZulu.id]);
+    assert.deepEqual(result.supersededSources.map(item=>[item.status,item.supersededById]),[["superseded",scenario.target.id],["superseded",scenario.target.id]]);
+    assert.equal(result.transferredEvidenceCount,1); assert.equal(result.redirectedRelationshipCount,3);
+    assert.deepEqual(result.conflicts,[
+      {relationshipId:"relationship_duplicate_zulu",resolution:"duplicate_collapsed",retainedRelationshipId:"relationship_duplicate_alpha"},
+      {relationshipId:"relationship_existing_001",resolution:"duplicate_collapsed",retainedRelationshipId:"relationship_duplicate_alpha"},
+      {relationshipId:"relationship_self_001",resolution:"self_link_removed",retainedRelationshipId:null},
+    ]);
+    const after=readMergeState(scenario.ctx.root);
+    assert.deepEqual(after.evidenceSources,before.evidenceSources);
+    assert.deepEqual(after.evidenceLinks,[
+      {link_id:"evidence_link_alpha_001",knowledge_object_id:scenario.target.id,evidence_source_id:scenario.secondEvidence.id,original_knowledge_object_id:scenario.sourceAlpha.id,operation_id:"evidence_operation_alpha_001",created_at:"2026-08-05T12:07:00.000Z"},
+      {link_id:"evidence_link_existing_001",knowledge_object_id:scenario.target.id,evidence_source_id:scenario.firstEvidence.id,original_knowledge_object_id:scenario.target.id,operation_id:"evidence_operation_existing_001",created_at:"2026-08-05T12:08:00.000Z"},
+    ]);
+    assert.deepEqual(after.relationships,[
+      {id:"relationship_duplicate_alpha",project_id:scenario.project.id,source_type:"knowledge",source_id:scenario.target.id,target_type:"document",target_id:scenario.document.id,relationship_type:"references",author:"ai",created_at:"2026-08-05T12:01:00.000Z"},
+      {id:"relationship_incoming_001",project_id:scenario.project.id,source_type:"document",source_id:scenario.document.id,target_type:"knowledge",target_id:scenario.target.id,relationship_type:"supports",author:"ai",created_at:"2026-08-05T12:03:00.000Z"},
+      {id:"relationship_outgoing_001",project_id:scenario.project.id,source_type:"knowledge",source_id:scenario.target.id,target_type:"project",target_id:scenario.project.id,relationship_type:"implements",author:"user",created_at:"2026-08-05T12:04:00.000Z"},
+    ]);
+    assert.equal(service.knowledge.list({projectId:scenario.project.id}).some(item=>item.id===scenario.sourceAlpha.id||item.id===scenario.sourceZulu.id),false);
+    assert.deepEqual(service.knowledge.list({projectId:scenario.project.id,status:"superseded"}).map(item=>item.id).sort(),[scenario.sourceAlpha.id,scenario.sourceZulu.id]);
+    assert.equal(service.knowledge.search({projectId:scenario.project.id,query:"never combine"}).length,0);
+    assert.equal(service.search({projectId:scenario.project.id,query:"second source text"}).length,0);
+    const snapshot=service.snapshot();
+    assert.equal(snapshot.knowledgeObjects.some(item=>item.id===scenario.sourceAlpha.id||item.id===scenario.sourceZulu.id),false);
+    assert.equal(snapshot.atlasNodes.some(item=>item.id===scenario.sourceAlpha.id||item.id===scenario.sourceZulu.id),false);
+    const histories=[scenario.target.id,scenario.sourceAlpha.id,scenario.sourceZulu.id].map(id=>service.knowledge.history(id)[0]!);
+    assert.deepEqual(histories.map(history=>history.eventType),["merged","merged","merged"]);
+    assert.deepEqual(histories.map(history=>history.operationId),[result.operationId,result.operationId,result.operationId]);
+    for(const history of histories){assert.equal(history.actorType,"user");assert.equal(history.actorId,null);assert.equal(history.reason,"consolidate evidence");assert.ok(history.beforeSnapshot);assert.ok(history.afterSnapshot);}
+    const [targetHistory,alphaHistory,zuluHistory]=histories;
+    assert.deepEqual(targetHistory.beforeSnapshot?.object,targetBefore);
+    assert.deepEqual(targetHistory.beforeSnapshot?.evidenceLinks.map(link=>link.id),["evidence_link_existing_001"]);
+    assert.deepEqual(targetHistory.afterSnapshot?.evidenceLinks.map(link=>link.id),["evidence_link_alpha_001","evidence_link_existing_001"]);
+    assert.deepEqual(targetHistory.afterSnapshot?.outgoingRelationships.map(relationship=>relationship.id),["relationship_duplicate_alpha","relationship_outgoing_001"]);
+    assert.deepEqual(targetHistory.afterSnapshot?.incomingRelationships.map(relationship=>relationship.id),["relationship_incoming_001"]);
+    assert.deepEqual(alphaHistory.beforeSnapshot?.evidenceLinks.map(link=>link.id),["evidence_link_alpha_001"]);
+    assert.deepEqual(zuluHistory.beforeSnapshot?.evidenceLinks.map(link=>link.id),["evidence_link_zulu_001"]);
+    for(const history of [alphaHistory,zuluHistory]){assert.equal(history.afterSnapshot?.object.status,"superseded");assert.equal(history.afterSnapshot?.object.supersededById,scenario.target.id);assert.deepEqual(history.afterSnapshot?.evidenceLinks,[]);assert.deepEqual(history.afterSnapshot?.incomingRelationships,[]);assert.deepEqual(history.afterSnapshot?.outgoingRelationships,[]);}
+    const canonicalBeforeRestart=readMergeState(scenario.ctx.root); const historiesBeforeRestart=[scenario.target.id,scenario.sourceAlpha.id,scenario.sourceZulu.id].map(id=>service.knowledge.history(id));
+    service.close(); service.initialize();
+    assert.deepEqual(readMergeState(scenario.ctx.root),canonicalBeforeRestart);
+    assert.deepEqual([scenario.target.id,scenario.sourceAlpha.id,scenario.sourceZulu.id].map(id=>service.knowledge.history(id)),historiesBeforeRestart);
+  } finally { scenario.ctx.dispose(); }
+});
+
+test("merge rejects invalid stale and cross-project plans", () => {
+  const ctx=fixture(); try {
+    const first=ctx.service.projects.create({name:"Merge validation"}),second=ctx.service.projects.create({name:"Foreign merge"});
+    const target=ctx.service.knowledge.create({projectId:first.id,type:"decision",title:"Target",body:"Canonical target.",confidence:"high"});
+    const source=ctx.service.knowledge.create({projectId:first.id,type:"fact",title:"Source",body:"Local source.",confidence:"medium"});
+    const otherSource=ctx.service.knowledge.create({projectId:second.id,type:"fact",title:"Foreign",body:"Foreign source.",confidence:"low"});
+    assert.throws(()=>ctx.service.knowledge.previewMerge({projectId:first.id,targetId:target.id,sourceIds:[]}),/at least one source/i);
+    assert.throws(()=>ctx.service.knowledge.previewMerge({projectId:first.id,targetId:target.id,sourceIds:[source.id,source.id]}),/unique/i);
+    assert.throws(()=>ctx.service.knowledge.previewMerge({projectId:first.id,targetId:target.id,sourceIds:[target.id]}),/cannot also be a source/i);
+    assert.throws(()=>ctx.service.knowledge.previewMerge({projectId:first.id,targetId:target.id,sourceIds:[otherSource.id]}),/specified project/i);
+    assert.throws(()=>ctx.service.knowledge.previewMerge({projectId:"bad",targetId:target.id,sourceIds:[source.id]}),/Invalid identifier/);
+    assert.throws(()=>ctx.service.knowledge.previewMerge({projectId:first.id,targetId:"bad",sourceIds:[source.id]}),/Invalid identifier/);
+    assert.throws(()=>ctx.service.knowledge.previewMerge({projectId:first.id,targetId:target.id,sourceIds:["bad"]}),/Invalid identifier/);
+    assert.throws(()=>ctx.service.knowledge.previewMerge({projectId:second.id,targetId:target.id,sourceIds:[otherSource.id]}),/specified project/i);
+    assert.throws(()=>ctx.service.knowledge.previewMerge({projectId:first.id,targetId:"missing_target_001",sourceIds:[source.id]}),/not found/i);
+    assert.throws(()=>ctx.service.knowledge.previewMerge({projectId:first.id,targetId:target.id,sourceIds:["missing_source_001"]}),/not found/i);
+    assert.throws(()=>ctx.service.knowledge.previewMerge({projectId:first.id,targetId:target.id,sourceIds:[source.id],reason:"x".repeat(501)}),/500/);
+    const cleanPreview=ctx.service.knowledge.previewMerge({projectId:first.id,targetId:target.id,sourceIds:[source.id]}); assert.deepEqual(cleanPreview.blockingErrors,[]);
+    ctx.service.knowledge.archive(source.id);
+    const stalePreview=ctx.service.knowledge.previewMerge({projectId:first.id,targetId:target.id,sourceIds:[source.id]});
+    assert.deepEqual(stalePreview.blockingErrors,[`Source Knowledge Object ${source.id} must be draft or approved.`]);
+    assert.throws(()=>ctx.service.knowledge.merge({projectId:first.id,targetId:target.id,sourceIds:[source.id]}),/blocking|draft or approved/i);
+    const archivedTarget=ctx.service.knowledge.create({projectId:first.id,type:"goal",title:"Archived target",body:"Cannot receive a merge.",confidence:"medium"}); ctx.service.knowledge.archive(archivedTarget.id);
+    assert.deepEqual(ctx.service.knowledge.previewMerge({projectId:first.id,targetId:archivedTarget.id,sourceIds:[target.id]}).blockingErrors,[`Target Knowledge Object ${archivedTarget.id} must be draft or approved.`]);
+    assert.throws(()=>ctx.service.knowledge.merge({projectId:first.id,targetId:archivedTarget.id,sourceIds:[target.id]}),/blocking|draft or approved/i);
+    const supersededSource=ctx.service.knowledge.create({projectId:first.id,type:"idea",title:"Superseded source",body:"Already replaced.",confidence:"low"}); ctx.service.knowledge.supersede({projectId:first.id,knowledgeObjectId:supersededSource.id,supersededById:target.id});
+    assert.deepEqual(ctx.service.knowledge.previewMerge({projectId:first.id,targetId:target.id,sourceIds:[supersededSource.id]}).blockingErrors,[`Source Knowledge Object ${supersededSource.id} must be draft or approved.`]);
+    assert.throws(()=>ctx.service.knowledge.merge({projectId:first.id,targetId:target.id,sourceIds:[supersededSource.id]}),/blocking|draft or approved/i);
+    const supersededTarget=ctx.service.knowledge.create({projectId:first.id,type:"question",title:"Superseded target",body:"Cannot be canonical.",confidence:"low"}); ctx.service.knowledge.supersede({projectId:first.id,knowledgeObjectId:supersededTarget.id,supersededById:target.id});
+    assert.deepEqual(ctx.service.knowledge.previewMerge({projectId:first.id,targetId:supersededTarget.id,sourceIds:[target.id]}).blockingErrors,[`Target Knowledge Object ${supersededTarget.id} must be draft or approved.`]);
+    assert.throws(()=>ctx.service.knowledge.merge({projectId:first.id,targetId:supersededTarget.id,sourceIds:[target.id]}),/blocking|draft or approved/i);
+    assert.throws(()=>ctx.service.knowledge.merge({projectId:first.id,targetId:target.id,sourceIds:[otherSource.id]}),/specified project/i);
+    assert.throws(()=>ctx.service.knowledge.merge({projectId:first.id,targetId:target.id,sourceIds:[target.id],reason:"x".repeat(501)}),/500/);
+  } finally { ctx.dispose(); }
+});
+
+test("merge rolls back every record when a mid-merge write fails", () => {
+  const scenario=mergeScenario(); try {
+    const before=readMergeState(scenario.ctx.root);
+    const trigger=new DatabaseSync(join(scenario.ctx.root,"vault.db"));
+    trigger.exec(`CREATE TRIGGER force_merge_rollback BEFORE UPDATE OF status ON knowledge_objects WHEN OLD.id='${scenario.sourceZulu.id}' AND NEW.status='superseded' BEGIN SELECT RAISE(ABORT, 'forced merge failure'); END;`); trigger.close();
+    assert.throws(()=>scenario.ctx.service.knowledge.merge({projectId:scenario.project.id,targetId:scenario.target.id,sourceIds:[scenario.sourceZulu.id,scenario.sourceAlpha.id],reason:"must roll back"}),/forced merge failure/);
+    const cleanup=new DatabaseSync(join(scenario.ctx.root,"vault.db")); cleanup.exec("DROP TRIGGER force_merge_rollback;"); cleanup.close();
+    assert.deepEqual(readMergeState(scenario.ctx.root),before);
+  } finally {
+    const cleanup=new DatabaseSync(join(scenario.ctx.root,"vault.db")); cleanup.exec("DROP TRIGGER IF EXISTS force_merge_rollback;"); cleanup.close();
+    scenario.ctx.dispose();
+  }
+});
+
 test("migration preserves canonical evidence and creates one honest baseline", () => {
   const root = mkdtempSync(join(tmpdir(), "orbit-vault-migration-"));
   const projectId = "project_legacy_001", folderId = "folder_legacy_001", documentId = "document_legacy_001", knowledgeId = "knowledge_target_001";

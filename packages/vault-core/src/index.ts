@@ -1,6 +1,6 @@
 import type {
   CreateEvidenceSourceInput, CreateFolderInput, CreateKnowledgeObjectInput, CreateMarkdownInput, CreateProjectInput, CreateRelationshipInput, DocumentFile, EntityStatus, ImportFilesInput,
-  EvidenceSource, Folder, KnowledgeEvidenceLink, KnowledgeFilters, KnowledgeHistoryRecord, KnowledgeObject, KnowledgeSearchInput, KnowledgeStatus, Project, ProjectFilters, SupersedeKnowledgeInput,
+  EvidenceSource, Folder, KnowledgeEvidenceLink, KnowledgeFilters, KnowledgeHistoryRecord, KnowledgeObject, KnowledgeSearchInput, KnowledgeStatus, MergeKnowledgeInput, MergeKnowledgePreview, MergeKnowledgeResult, Project, ProjectFilters, SupersedeKnowledgeInput,
   ReconciliationReport, Relationship, RelationshipFilters, SearchInput, SearchResult, UpdateKnowledgeObjectInput, UpdateProjectInput, VaultSnapshot,
 } from "@orbit/vault-types";
 
@@ -67,6 +67,8 @@ export interface KnowledgeRepository {
   setKnowledgeStatus(id: string, status: KnowledgeStatus): KnowledgeObject;
   restoreKnowledgeObject(id: string, reason: string | null): KnowledgeObject;
   supersedeKnowledgeObject(input: SupersedeKnowledgeInput): KnowledgeObject;
+  previewKnowledgeMerge(input: MergeKnowledgeInput): MergeKnowledgePreview;
+  mergeKnowledgeObjects(input: MergeKnowledgeInput): MergeKnowledgeResult;
   listKnowledgeHistory(knowledgeObjectId: string): KnowledgeHistoryRecord[];
   searchKnowledge(input: KnowledgeSearchInput): KnowledgeObject[];
 }
@@ -134,6 +136,8 @@ export class VaultService {
     archive: (id: string) => this.repository.setKnowledgeStatus(assertIdentifier(id), "archived"),
     restore: (id: string, reason?: string | null) => this.repository.restoreKnowledgeObject(assertIdentifier(id), normalizeReason(reason)),
     supersede: (input: SupersedeKnowledgeInput) => this.repository.supersedeKnowledgeObject({ ...input, projectId: assertIdentifier(input.projectId,"projectId"), knowledgeObjectId: assertIdentifier(input.knowledgeObjectId,"knowledgeObjectId"), ...(input.supersededById !== undefined ? { supersededById: input.supersededById ? assertIdentifier(input.supersededById,"supersededById") : null } : {}), reason: normalizeReason(input.reason) }),
+    previewMerge: (input: MergeKnowledgeInput) => this.repository.previewKnowledgeMerge(normalizeMergeInput(input)),
+    merge: (input: MergeKnowledgeInput) => this.repository.mergeKnowledgeObjects(normalizeMergeInput(input)),
     history: (id: string) => this.repository.listKnowledgeHistory(assertIdentifier(id)),
     search: (input: KnowledgeSearchInput) => { const query=input.query.trim(); return query ? this.repository.searchKnowledge({ ...input, query, limit: clampLimit(input.limit) }) : []; },
   };
@@ -157,3 +161,4 @@ export class VaultService {
 const clampLimit = (limit?: number) => Math.min(100, Math.max(1, limit ?? 30));
 const knowledgeText = (value: string, field: string, maximum: number) => { const text=String(value).trim(); if (!text) throw new VaultDomainError("VALIDATION_ERROR", `Knowledge ${field} is required.`, field); if (text.length>maximum) throw new VaultDomainError("VALIDATION_ERROR", `Knowledge ${field} is too long.`, field); return text; };
 const normalizeReason = (value: string | null | undefined) => { const reason = value == null ? "" : String(value).trim(); if (reason.length > 500) throw new VaultDomainError("VALIDATION_ERROR", "Reason must be 500 characters or fewer.", "reason"); return reason || null; };
+const normalizeMergeInput = (input: MergeKnowledgeInput): MergeKnowledgeInput => ({...input,projectId:assertIdentifier(input.projectId,"projectId"),targetId:assertIdentifier(input.targetId,"targetId"),sourceIds:input.sourceIds.map((id,index)=>assertIdentifier(id,`sourceIds[${index}]`)),reason:normalizeReason(input.reason)});

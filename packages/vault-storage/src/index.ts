@@ -2,12 +2,16 @@ import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import type { CreateEvidenceSourceInput, CreateFolderInput, CreateKnowledgeObjectInput, CreateMarkdownInput, CreateProjectInput, CreateRelationshipInput, DocumentFile, EntityStatus, EvidenceSource, Folder, ImportFilesInput, KnowledgeAggregateSnapshot, KnowledgeConfidence, KnowledgeEvidenceLink, KnowledgeFilters, KnowledgeHistoryEvent, KnowledgeHistoryRecord, KnowledgeObject, KnowledgeSearchInput, KnowledgeStatus, Project, ProjectFilters, ReconciliationReport, Relationship, RelationshipEndpointType, RelationshipFilters, RelationshipType, SearchInput, SearchResult, SupersedeKnowledgeInput, UpdateKnowledgeObjectInput, UpdateProjectInput, VaultSnapshot } from "@orbit/vault-types";
+import type { CreateEvidenceSourceInput, CreateFolderInput, CreateKnowledgeObjectInput, CreateMarkdownInput, CreateProjectInput, CreateRelationshipInput, DocumentFile, EntityStatus, EvidenceSource, Folder, ImportFilesInput, KnowledgeAggregateSnapshot, KnowledgeConfidence, KnowledgeEvidenceLink, KnowledgeFilters, KnowledgeHistoryEvent, KnowledgeHistoryRecord, KnowledgeObject, KnowledgeSearchInput, KnowledgeStatus, MergeKnowledgeInput, MergeKnowledgePreview, MergeKnowledgeResult, MergeRelationshipConflict, Project, ProjectFilters, ReconciliationReport, Relationship, RelationshipEndpointType, RelationshipFilters, RelationshipType, SearchInput, SearchResult, SupersedeKnowledgeInput, UpdateKnowledgeObjectInput, UpdateProjectInput, VaultSnapshot } from "@orbit/vault-types";
 import { VaultDomainError, type VaultRepository } from "@orbit/vault-core";
 
 type StorageOptions = { vaultRoot: string; developmentMode: boolean; developmentRoot: string };
 type DbRow = Record<string, string | null>;
 type Migration = { version: number; sql?: string; run?: (db: DatabaseSync) => void };
+type MergePlan = MergeKnowledgePreview & {
+  evidenceActions: {link:KnowledgeEvidenceLink;action:"transfer"|"delete"}[];
+  relationshipActions: {relationship:Relationship;action:"redirect"|"delete"}[];
+};
 
 const safeLinkedKind=(path:string,allowedRoot:string):"directory"|"file"|null=>{try{const resolved=realpathSync.native(path),within=relative(realpathSync.native(allowedRoot),resolved);if(within.startsWith(`..${sep}`)||within===".."||isAbsolute(within))return null;const stats=statSync(path);return stats.isDirectory()?"directory":stats.isFile()?"file":null;}catch{return null;}};
 
@@ -343,6 +347,81 @@ export class SqliteVaultRepository implements VaultRepository {
       const before=this.captureKnowledgeAggregate(source.id); this.db.prepare("UPDATE knowledge_objects SET status='superseded', superseded_by_id=?, updated_at=? WHERE id=?").run(replacementId,now(),source.id); this.appendKnowledgeHistory(source.id,entityId(),"superseded",before,this.captureKnowledgeAggregate(source.id),input.reason??null); return this.getKnowledgeObject(source.id);
     });
   }
+  previewKnowledgeMerge(input:MergeKnowledgeInput):MergeKnowledgePreview {
+    const {target,sources,evidenceLinks,redirectedRelationships,conflicts,blockingErrors}=this.buildMergePlan(input);
+    return {target,sources,evidenceLinks,redirectedRelationships,conflicts,blockingErrors};
+  }
+  mergeKnowledgeObjects(input:MergeKnowledgeInput):MergeKnowledgeResult {
+    return this.transaction(() => {
+      const plan=this.buildMergePlan(input);
+      if(plan.blockingErrors.length)throw new VaultDomainError("VALIDATION_ERROR",`Merge is blocked: ${plan.blockingErrors.join(" ")}`);
+      const operationId=entityId(),timestamp=now(),aggregateIds=[plan.target.id,...plan.sources.map(source=>source.id)];
+      const beforeSnapshots=new Map(aggregateIds.map(id=>[id,this.captureKnowledgeAggregate(id)]));
+      for(const action of plan.evidenceActions.filter(action=>action.action==="delete"))this.db.prepare("DELETE FROM knowledge_evidence_links WHERE link_id=?").run(action.link.id);
+      for(const action of plan.evidenceActions.filter(action=>action.action==="transfer"))this.db.prepare("UPDATE knowledge_evidence_links SET knowledge_object_id=? WHERE link_id=?").run(plan.target.id,action.link.id);
+      for(const action of plan.relationshipActions.filter(action=>action.action==="delete"))this.db.prepare("DELETE FROM relationships WHERE id=?").run(action.relationship.id);
+      for(const action of plan.relationshipActions.filter(action=>action.action==="redirect"))this.db.prepare("UPDATE relationships SET source_id=?, target_id=? WHERE id=?").run(action.relationship.sourceId,action.relationship.targetId,action.relationship.id);
+      for(const source of plan.sources)this.db.prepare("UPDATE knowledge_objects SET status='superseded', superseded_by_id=?, updated_at=? WHERE id=?").run(plan.target.id,timestamp,source.id);
+      this.db.prepare("UPDATE knowledge_objects SET updated_at=? WHERE id=?").run(timestamp,plan.target.id);
+      const afterSnapshots=new Map(aggregateIds.map(id=>[id,this.captureKnowledgeAggregate(id)]));
+      for(const id of aggregateIds)this.appendKnowledgeHistory(id,operationId,"merged",beforeSnapshots.get(id)!,afterSnapshots.get(id)!,input.reason??null);
+      return {operationId,target:this.getKnowledgeObject(plan.target.id),supersededSources:plan.sources.map(source=>this.getKnowledgeObject(source.id)),transferredEvidenceCount:plan.evidenceActions.filter(action=>action.action==="transfer").length,redirectedRelationshipCount:plan.relationshipActions.filter(action=>action.action==="redirect").length,conflicts:plan.conflicts};
+    });
+  }
+  private buildMergePlan(input:MergeKnowledgeInput):MergePlan {
+    this.getProject(input.projectId);
+    if(input.sourceIds.length===0)throw new VaultDomainError("VALIDATION_ERROR","Choose at least one source Knowledge Object.","sourceIds");
+    const sortedSourceIds=[...input.sourceIds].sort(compareText);
+    if(new Set(sortedSourceIds).size!==sortedSourceIds.length)throw new VaultDomainError("VALIDATION_ERROR","Source Knowledge Object IDs must be unique.","sourceIds");
+    if(sortedSourceIds.includes(input.targetId))throw new VaultDomainError("VALIDATION_ERROR","The target Knowledge Object cannot also be a source.","sourceIds");
+    const target=this.getKnowledgeObject(input.targetId),sources=sortedSourceIds.map(id=>this.getKnowledgeObject(id));
+    if(target.projectId!==input.projectId)throw new VaultDomainError("VALIDATION_ERROR","Target Knowledge Object must belong to the specified project.","targetId");
+    const foreignSource=sources.find(source=>source.projectId!==input.projectId);
+    if(foreignSource)throw new VaultDomainError("VALIDATION_ERROR","Source Knowledge Objects must belong to the specified project.","sourceIds");
+    const blockingErrors:string[]=[];
+    if(target.status!=="draft"&&target.status!=="approved")blockingErrors.push(`Target Knowledge Object ${target.id} must be draft or approved.`);
+    for(const source of sources)if(source.status!=="draft"&&source.status!=="approved")blockingErrors.push(`Source Knowledge Object ${source.id} must be draft or approved.`);
+    const sourceIds=new Set(sortedSourceIds);
+    const relationships=(this.db.prepare("SELECT * FROM relationships WHERE project_id=? ORDER BY created_at, id").all(input.projectId) as DbRow[]).map(mapRelationship);
+    const redirectedRelationships=relationships.filter(relationship=>(relationship.sourceType==="knowledge"&&sourceIds.has(relationship.sourceId))||(relationship.targetType==="knowledge"&&sourceIds.has(relationship.targetId))).map(relationship=>({...relationship,sourceId:relationship.sourceType==="knowledge"&&sourceIds.has(relationship.sourceId)?target.id:relationship.sourceId,targetId:relationship.targetType==="knowledge"&&sourceIds.has(relationship.targetId)?target.id:relationship.targetId})).sort((left,right)=>compareText(left.id,right.id));
+    const conflicts:MergeRelationshipConflict[]=[];
+    const remainingRedirects:Relationship[]=[];
+    for(const relationship of redirectedRelationships){
+      if(relationship.sourceType===relationship.targetType&&relationship.sourceId===relationship.targetId)conflicts.push({relationshipId:relationship.id,resolution:"self_link_removed",retainedRelationshipId:null});
+      else remainingRedirects.push(relationship);
+    }
+    const existingTargetRelationships=relationships.filter(relationship=>!redirectedRelationships.some(redirected=>redirected.id===relationship.id)&&((relationship.sourceType==="knowledge"&&relationship.sourceId===target.id)||(relationship.targetType==="knowledge"&&relationship.targetId===target.id)));
+    const groups=new Map<string,Relationship[]>();
+    for(const relationship of [...remainingRedirects,...existingTargetRelationships]){
+      const key=JSON.stringify([relationship.projectId,relationship.sourceType,relationship.sourceId,relationship.targetType,relationship.targetId,relationship.relationshipType]);
+      const group=groups.get(key)??[];group.push(relationship);groups.set(key,group);
+    }
+    for(const group of groups.values())if(group.length>1){
+      group.sort(compareCreatedThenId);const retained=group[0]!;
+      for(const relationship of group.slice(1))conflicts.push({relationshipId:relationship.id,resolution:"duplicate_collapsed",retainedRelationshipId:retained.id});
+    }
+    const sourceEvidenceLinks=sources.flatMap(source=>(this.db.prepare("SELECT * FROM knowledge_evidence_links WHERE knowledge_object_id=? ORDER BY created_at, link_id").all(source.id) as DbRow[]).map(mapKnowledgeEvidenceLink)).sort(compareCreatedThenId);
+    const sortedConflicts=conflicts.sort((left,right)=>compareText(left.relationshipId,right.relationshipId));
+    const relationshipDeletes=new Set(sortedConflicts.map(conflict=>conflict.relationshipId));
+    const relationshipById=new Map([...redirectedRelationships,...existingTargetRelationships].map(relationship=>[relationship.id,relationship]));
+    const relationshipActions=[
+      ...[...relationshipDeletes].map(id=>({relationship:relationshipById.get(id)!,action:"delete" as const})),
+      ...redirectedRelationships.filter(relationship=>!relationshipDeletes.has(relationship.id)).map(relationship=>({relationship,action:"redirect" as const})),
+    ].sort((left,right)=>compareText(left.relationship.id,right.relationship.id));
+    const targetEvidenceLinks=(this.db.prepare("SELECT * FROM knowledge_evidence_links WHERE knowledge_object_id=? ORDER BY created_at, link_id").all(target.id) as DbRow[]).map(mapKnowledgeEvidenceLink);
+    const evidenceGroups=new Map<string,KnowledgeEvidenceLink[]>();
+    for(const link of [...sourceEvidenceLinks,...targetEvidenceLinks]){const group=evidenceGroups.get(link.evidenceSourceId)??[];group.push(link);evidenceGroups.set(link.evidenceSourceId,group);}
+    const evidenceActions:{link:KnowledgeEvidenceLink;action:"transfer"|"delete"}[]=[];
+    for(const group of evidenceGroups.values()){
+      const sourceGroup=group.filter(link=>sourceIds.has(link.knowledgeObjectId));if(sourceGroup.length===0)continue;
+      group.sort(compareCreatedThenId);const retained=group[0]!;
+      for(const link of group)if(link.id!==retained.id)evidenceActions.push({link,action:"delete"});
+      if(sourceIds.has(retained.knowledgeObjectId))evidenceActions.push({link:retained,action:"transfer"});
+    }
+    evidenceActions.sort((left,right)=>compareText(left.link.id,right.link.id));
+    const evidenceLinks=evidenceActions.filter(action=>action.action==="transfer").map(action=>action.link).sort(compareCreatedThenId);
+    return {target,sources,evidenceLinks,redirectedRelationships,conflicts:sortedConflicts,blockingErrors,evidenceActions,relationshipActions};
+  }
   listKnowledgeHistory(knowledgeObjectId:string) { this.getKnowledgeObject(knowledgeObjectId); return (this.db.prepare("SELECT * FROM knowledge_object_history WHERE knowledge_object_id=? ORDER BY created_at DESC, rowid DESC").all(knowledgeObjectId) as DbRow[]).map(mapKnowledgeHistory); }
   private captureKnowledgeAggregate(id:string):KnowledgeAggregateSnapshot { return {schemaVersion:1,object:this.getKnowledgeObject(id),evidenceLinks:(this.db.prepare("SELECT * FROM knowledge_evidence_links WHERE knowledge_object_id=? ORDER BY created_at, link_id").all(id) as DbRow[]).map(mapKnowledgeEvidenceLink),incomingRelationships:(this.db.prepare("SELECT * FROM relationships WHERE target_type='knowledge' AND target_id=? ORDER BY created_at, id").all(id) as DbRow[]).map(mapRelationship),outgoingRelationships:(this.db.prepare("SELECT * FROM relationships WHERE source_type='knowledge' AND source_id=? ORDER BY created_at, id").all(id) as DbRow[]).map(mapRelationship)}; }
   private appendKnowledgeHistory(knowledgeObjectId:string,operationId:string,eventType:KnowledgeHistoryEvent,beforeSnapshot:KnowledgeAggregateSnapshot|null,afterSnapshot:KnowledgeAggregateSnapshot|null,reason:string|null) { this.db.prepare("INSERT INTO knowledge_object_history(history_id, knowledge_object_id, operation_id, event_type, before_snapshot, after_snapshot, actor_type, actor_id, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, 'user', NULL, ?, ?)").run(entityId(),knowledgeObjectId,operationId,eventType,beforeSnapshot?JSON.stringify(beforeSnapshot):null,afterSnapshot?JSON.stringify(afterSnapshot):null,reason,now()); }
@@ -460,6 +539,8 @@ export class SqliteVaultRepository implements VaultRepository {
 
 const now = () => new Date().toISOString();
 const entityId = () => randomUUID().replace(/-/g, "");
+const compareText = (left:string,right:string) => left<right?-1:left>right?1:0;
+const compareCreatedThenId = <T extends {createdAt:string;id:string}>(left:T,right:T) => compareText(left.createdAt,right.createdAt)||compareText(left.id,right.id);
 const posixJoin = (...parts: string[]) => parts.filter(Boolean).join("/");
 const replacePrefix = (value: string, oldPrefix: string, newPrefix: string) => newPrefix + value.slice(oldPrefix.length);
 const uniqueName = (base: string, exists: (candidate: string) => boolean) => { if (!exists(base)) return base; for (let i = 2; i < 1000; i++) { const candidate = `${base} (${i})`; if (!exists(candidate)) return candidate; } throw duplicate("Too many duplicate names."); };
