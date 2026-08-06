@@ -229,3 +229,92 @@ test("snapshot id path traversal is rejected", () => {
     assert.throws(() => ctx.repo.deleteSnapshot("../../etc"));
   } finally { ctx.dispose(); }
 });
+
+// --- Task 6: restoreSnapshotToNewVault -----------------------------------
+
+const byId = (a: { id: string }, b: { id: string }) => a.id.localeCompare(b.id);
+const logicalDump = (repo: SqliteVaultRepository) =>
+  repo.listProjects().sort(byId).map((p) => ({
+    project: p,
+    folders: repo.listProjectFolders(p.id).sort(byId),
+    documents: repo.listProjectDocuments(p.id).sort(byId),
+    knowledge: repo.listKnowledgeObjects({ projectId: p.id }).sort(byId).map((k) => ({
+      object: k,
+      evidence: repo.listEvidence(k.id).sort(byId),
+      history: repo.listKnowledgeHistory(k.id),
+    })),
+    relationships: repo.listRelationships({ projectId: p.id }).sort(byId),
+  }));
+
+const richVault = () => {
+  const ctx = repoFixture();
+  const project = ctx.repo.createProject({ name: "Rich" });
+  const doc = ctx.repo.createMarkdownDocument({ projectId: project.id, parentFolderId: null, title: "note", content: "# hello world\n" });
+  const knowledge = ctx.repo.createKnowledgeObject({ projectId: project.id, parentFolderId: null, type: "fact", title: "A fact", body: "Body text", confidence: "high" });
+  ctx.repo.attachEvidence({ projectId: project.id, knowledgeObjectId: knowledge.id, sourceType: "document", sourceId: doc.id, sourcePath: doc.relativePath, excerpt: "evidence", locator: "note", confidence: "high" });
+  ctx.repo.setKnowledgeStatus(knowledge.id, "approved"); // generates history
+  ctx.repo.createRelationship({ projectId: project.id, sourceType: "knowledge", sourceId: knowledge.id, targetType: "document", targetId: doc.id, relationshipType: "references" });
+  return { ...ctx, project, doc, knowledge };
+};
+
+const stagingLeftIn = (parent: string) => readdirSync(parent).filter((n) => n.includes(".orbit-restoring-"));
+
+test("restore reproduces logical state + file hashes into a NEW vault with new identity + lineage", () => {
+  const ctx = richVault();
+  let restored: SqliteVaultRepository | null = null;
+  try {
+    const sourceHashes = hashTree(join(ctx.root, "projects"));
+    const sourceDump = JSON.stringify(logicalDump(ctx.repo));
+    const sourceVaultId = ctx.repo.getVaultId();
+    const snap = ctx.repo.createSnapshot({ appVersion: "0.2.0" });
+
+    const result = ctx.repo.restoreSnapshotToNewVault({ snapshotId: snap.id, parentPath: ctx.root, folderName: "restored-here" });
+    const target = join(ctx.root, "restored-here");
+    assert.equal(result.targetPath, target);
+
+    restored = new SqliteVaultRepository({ vaultRoot: target, developmentMode: true, developmentRoot: target });
+    restored.initialize();
+    assert.deepEqual(hashTree(join(target, "projects")), sourceHashes);
+    assert.equal(JSON.stringify(logicalDump(restored)), sourceDump);
+    assert.notEqual(restored.getVaultId(), sourceVaultId);
+    assert.equal(restored.getVaultMeta("restored_from_vault_id"), sourceVaultId);
+    assert.equal(restored.getVaultMeta("restored_from_snapshot_id"), snap.id);
+    assert.ok(restored.getVaultMeta("restored_at"));
+    assert.equal(stagingLeftIn(ctx.root).length, 0);
+  } finally { try { restored?.close(); } catch { /* noop */ } ctx.dispose(); }
+});
+
+test("restore refuses a corrupted snapshot and leaves no target", () => {
+  const ctx = richVault();
+  try {
+    const snap = ctx.repo.createSnapshot({ appVersion: "0.2.0" });
+    writeFileSync(join(ctx.root, "backups", snap.id, "vault.db"), "corrupt");
+    const before = JSON.stringify(logicalDump(ctx.repo));
+    assert.throws(() => ctx.repo.restoreSnapshotToNewVault({ snapshotId: snap.id, parentPath: ctx.root, folderName: "nope" }));
+    assert.equal(existsSync(join(ctx.root, "nope")), false);
+    assert.equal(stagingLeftIn(ctx.root).length, 0);
+    assert.equal(JSON.stringify(logicalDump(ctx.repo)), before); // live vault unchanged
+  } finally { ctx.dispose(); }
+});
+
+test("restore refuses a schema-too-new snapshot (schema guard)", () => {
+  const ctx = richVault();
+  try {
+    const snap = ctx.repo.createSnapshot({ appVersion: "0.2.0" });
+    const mPath = join(ctx.root, "backups", snap.id, "manifest.json");
+    const m = JSON.parse(readFileSync(mPath, "utf8"));
+    m.schemaVersion = 9999;
+    writeFileSync(mPath, JSON.stringify(m, null, 2));
+    assert.throws(() => ctx.repo.restoreSnapshotToNewVault({ snapshotId: snap.id, parentPath: ctx.root, folderName: "t2" }), /newer version/i);
+    assert.equal(existsSync(join(ctx.root, "t2")), false);
+  } finally { ctx.dispose(); }
+});
+
+test("restore refuses when the target already exists", () => {
+  const ctx = richVault();
+  try {
+    const snap = ctx.repo.createSnapshot({ appVersion: "0.2.0" });
+    mkdirSync(join(ctx.root, "exists"), { recursive: true });
+    assert.throws(() => ctx.repo.restoreSnapshotToNewVault({ snapshotId: snap.id, parentPath: ctx.root, folderName: "exists" }));
+  } finally { ctx.dispose(); }
+});

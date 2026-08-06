@@ -357,6 +357,44 @@ export class SqliteVaultRepository implements VaultRepository {
     return { totalBytes: list.reduce((n, s) => n + s.sizeBytes, 0), count: list.length };
   }
 
+  restoreSnapshotToNewVault(input: RestoreSnapshotInput): RestoreResult {
+    const snapshotId = assertIdentifier(input.snapshotId);
+    const parentPath = resolve(String(input.parentPath));
+    const folderName = String(input.folderName);
+    if (!existsSync(parentPath)) throw new VaultDomainError("VALIDATION_ERROR", "The chosen location does not exist.");
+    if (!isSafeRelPosixPath(folderName) || folderName.includes("/")) throw new VaultDomainError("VALIDATION_ERROR", "Enter a valid new folder name for the restored Vault.");
+    const target = join(parentPath, folderName);
+    if (existsSync(target)) throw new VaultDomainError("VALIDATION_ERROR", "That folder already exists. Choose a new, empty name for the restored Vault.");
+    // Validate BEFORE writing anything to disk.
+    const inspection = this.inspectSnapshot(snapshotId);
+    if (!inspection.integrityOk) throw new VaultDomainError("VALIDATION_ERROR", `Snapshot failed its integrity check: ${inspection.problems.join("; ")}`);
+    if (inspection.manifest.schemaVersion > Math.max(...MIGRATIONS.map(m => m.version))) throw new VaultDomainError("VALIDATION_ERROR", "This snapshot was written by a newer version of Orbit Vault and cannot be restored by this build.");
+    const snapshotDir = this.snapshotDir(snapshotId);
+    const staging = join(parentPath, `.orbit-restoring-${randomUUID()}`);
+    const newId = randomUUID();
+    try {
+      mkdirSync(join(staging, "projects"), { recursive: true });
+      copyFileSync(join(snapshotDir, "vault.db"), join(staging, "vault.db"));
+      cpSync(join(snapshotDir, "projects"), join(staging, "projects"), { recursive: true });
+      const staged = new DatabaseSync(join(staging, "vault.db"));
+      try {
+        const integrity = staged.prepare("PRAGMA integrity_check").get() as { integrity_check: string };
+        if (integrity.integrity_check !== "ok") throw new VaultDomainError("VALIDATION_ERROR", "The restored database failed SQLite's integrity check.");
+        if ((staged.prepare("PRAGMA foreign_key_check").all()).length > 0) throw new VaultDomainError("VALIDATION_ERROR", "The restored database failed a foreign-key check.");
+        const upsert = staged.prepare("INSERT INTO vault_meta(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value");
+        upsert.run("vault_id", newId);
+        upsert.run("restored_from_vault_id", inspection.manifest.vaultId);
+        upsert.run("restored_from_snapshot_id", snapshotId);
+        upsert.run("restored_at", now());
+      } finally { staged.close(); }
+      renameSync(staging, target); // atomic finalize; target did not exist -> works on Windows too
+      return { vaultId: newId, targetPath: target };
+    } catch (error) {
+      rmSync(staging, { recursive: true, force: true });
+      throw error;
+    }
+  }
+
   createProject(input: CreateProjectInput) {
     const name = this.uniqueProjectName(input.name), id = entityId(), timestamp = now(), storagePath=`${id}/files`;
     const project: Project = { id, name, storagePath, description: input.description ?? null, icon: input.icon ?? null, color: input.color ?? null, status: "active", createdAt: timestamp, updatedAt: timestamp };
