@@ -25,6 +25,10 @@ const startProjectsWatcher=()=>{
   try{projectsWatcher=watch(projectsPath,{recursive:true,persistent:false},()=>{if(reconcileTimer)clearTimeout(reconcileTimer);reconcileTimer=setTimeout(()=>{reconcileTimer=null;const result=safe(()=>vault.filesystem.reconcile());if(result.ok&&(result.value.projectsAdded>0||result.value.projectsArchived>0||result.value.foldersAdded>0||result.value.documentsAdded>0))notifyChanged();},750);});}
   catch(error){console.warn("Vault projects watcher could not start",error);}
 };
+// Defensive barrier around a snapshot capture: pause the projects watcher (so an
+// external-change reconcile cannot race the capture) and guarantee it restarts,
+// even on failure. Capture itself is synchronous, so accepted IPC cannot interleave.
+const withWriteBarrier = <T>(operation: () => T): T => { stopProjectsWatcher(); try { return operation(); } finally { startProjectsWatcher(); } };
 const apiError = (error: unknown): VaultApiError => {
   console.error("Vault operation failed", error);
   if (error instanceof VaultDomainError) return { code: error.code, message: error.message, field: error.field };
@@ -87,6 +91,16 @@ const registerVaultIpc = () => {
   handle("vault:evidence:list", id => vault.evidence.list(id)); handle("vault:evidence:attach", input => vault.evidence.attach(input), true);
   handle("vault:relationships:list", filters => vault.relationships.list(filters)); handle("vault:relationships:create", input => vault.relationships.create(input), true); handle("vault:relationships:remove", id => vault.relationships.remove(id), true);
   handle("vault:integrity:analyze", projectId => vault.integrity.analyze(projectId));
+  handle("vault:backup:create", () => withWriteBarrier(() => vault.backup.create({ appVersion: app.getVersion() })), true);
+  handle("vault:backup:list", () => vault.backup.list());
+  handle("vault:backup:inspect", (snapshotId: string) => vault.backup.inspect(snapshotId));
+  handle("vault:backup:delete", (snapshotId: string) => vault.backup.delete(snapshotId), true);
+  handle("vault:backup:disk-usage", () => vault.backup.diskUsage());
+  ipcMain.handle("vault:backup:restore", (_event, input: { snapshotId: string; folderName: string }) => asyncSafe(async () => {
+    const parent = await chooseVaultDirectory("Choose where to create the restored Vault");
+    if (!parent) throw new VaultDomainError("VALIDATION_ERROR", "Restore cancelled.");
+    return vault.backup.restoreToNewVault({ snapshotId: input.snapshotId, parentPath: parent, folderName: input.folderName });
+  }));
   handle("vault:search", input => vault.search(input)); handle("vault:development:seed", () => vault.development.seed(), true); handle("vault:development:reset", () => vault.development.reset(), true);
 };
 
