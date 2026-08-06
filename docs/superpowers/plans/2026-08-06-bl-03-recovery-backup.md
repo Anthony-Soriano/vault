@@ -27,6 +27,34 @@ Design of record: `docs/superpowers/specs/2026-08-06-bl-03-recovery-backup-desig
 
 ---
 
+## ⚠️ Audit corrections (2026-08-06) — AUTHORITATIVE
+
+> **This document is the detailed *reference*. The authoritative step-by-step is the concise execution plan `docs/superpowers/plans/2026-08-06-bl-03-recovery-backup-execution.md`.** Where a code snippet below disagrees with these corrections, the corrections win. A repository audit found the following (verified against `main`):
+>
+> **A. Migration version is 7.** `MIGRATIONS` currently ends at version 6 (`packages/vault-storage/src/index.ts`). The `vault_meta` migration is **version 7**.
+>
+> **B. No package subpath export.** `packages/vault-storage/package.json` has `"exports": "./src/index.ts"` (a bare string, no map). `@orbit/vault-storage/backup` will **not** resolve. Put helpers in a new `src/backup.ts` and **re-export them from `src/index.ts`**; tests import from `@orbit/vault-storage`.
+>
+> **C. Imports already present / missing.** `randomUUID` (node:crypto), `VaultDomainError`, `now()` (`= new Date().toISOString()`), `notFound()`, `statSync`, `renameSync`, `rmSync`, `readdirSync`, `existsSync`, `writeFileSync`, `mkdirSync`, `readFileSync`, `copyFileSync` are already imported in storage. **`cpSync` is NOT imported** — add it to the `node:fs` import (Node ≥ 22 supports it). Do not re-add already-present imports.
+>
+> **D. Reuse `assertIdentifier`.** Its regex `/^[a-zA-Z0-9_-]{6,80}$/` (in `@orbit/vault-core`) rejects `/`, `\`, and `.`, so it blocks path traversal; snapshot ids (`<iso-with-dashes>_<uuid>`, ~61 chars, no `.`/`:`) satisfy it. Use `assertIdentifier` for snapshot ids — do **not** invent `assertSnapshotId`.
+>
+> **E. `VACUUM INTO` must run outside any transaction.** Do not wrap `createSnapshot` in `this.transaction()`; SQLite forbids VACUUM inside a transaction. Capture runs in autocommit.
+>
+> **F. Write barrier — corrected mechanism (see Concern A).** Accepted-write consistency comes from **synchronous, single-threaded execution** (node:sqlite `DatabaseSync` + fs ops are synchronous; no accepted IPC mutation or watcher reconcile can interleave between the DB capture and the file copy), and from the fact that the snapshot reads only **committed persisted state** (so *any* caller — UI or future non-UI — gets a consistent snapshot). `withWriteBarrier` (stop watcher + **guaranteed restart in `finally`**) is **defensive** (clears a pending reconcile timer; guarantees release on failure), not the primary mechanism. **Do not add an in-process "reject mutations during capture" flag** — under synchronous execution no other handler can observe it; it would be theater. The renderer autosave flush only persists an **in-flight editor buffer** before capture (a UI concern), and must not be presented as a storage guarantee.
+>
+> **G. External-change test seam (see Concern B) — committed mechanism.** `createSnapshot(options, internalHooks?: { onAfterManagedCopy?: () => void })`. The `VaultRepository` interface method and `VaultService.backup.create` pass **only** `options`; IPC/preload never pass the second argument. Tests call the concrete `SqliteVaultRepository.createSnapshot(options, { onAfterManagedCopy: () => writeFileSync(...projects...) })` to deterministically force the after-fingerprint to differ, then assert it throws and leaves no non-temp snapshot. This seam is never reachable through the service, IPC, or renderer.
+>
+> **H. Manifest integrity policy (see Concern C).** `manifest.json` cannot checksum itself. On read/restore, validate **structure + exact file bijection**: `snapshotVersion===1`; non-empty `vaultVersion`; `createdAt` a valid ISO timestamp; `vaultId` a valid UUID; integer `schemaVersion≥1`; integer `projectCount≥0`; `checksums` an object whose keys are **safe relative POSIX paths** (no leading `/`, no `..`, no `\`, no drive letter) each starting with `vault.db` or `projects/`; and the set of files present under the snapshot dir (excluding `manifest.json`) **exactly equals** the checksum key set (no missing, no unexpected extra), each matching its SHA-256. **This defends against corruption and accidental modification, not forgery** — BL-03 adds no cryptographic signature or cloud trust.
+>
+> **I. Restore order + Windows finalization (see Concern E).** Order: (1) validate manifest structure+paths; (2) verify checksums; (3) verify supported schema version; (4) stage files; (5) open the **staged** DB and run `PRAGMA integrity_check` + `PRAGMA foreign_key_check`; (6) assign new `vault_id` + lineage; (7) **close all DB handles**; (8) atomic finalize; (9) guarantee no valid-looking target on failure. **Windows:** `renameSync` onto an existing directory fails, so the **target must not pre-exist**. UX selects a **parent directory + a new Vault folder name**; stage at a sibling `<parent>/.orbit-restoring-<uuid>` (same filesystem) and rename to the non-existent `<parent>/<name>`.
+>
+> **J. Not "additive".** BL-03 is backward-compatible but **introduces a DB migration, persisted Vault identity, restore lineage semantics, new repository/service contracts, new IPC channels, and new UI** — it changes persistent state and expands the architecture. `ARCHITECTURE.md` and `DECISIONS.md` must be updated at closeout (Rule 11).
+>
+> **K. Renderer surface.** Top-level `view` is `"files" | "knowledge" | "atlas"` with a `.view-switch` button row (`App.tsx`); Knowledge renders as an overlay; Integrity lives *inside* KnowledgeView. Add a `"backups"` view + button + a Backups surface following the Knowledge-overlay pattern. Autosave flush seam: `saveNow(content)` (App.tsx) — await it when `dirty` before `backup.create()`.
+
+---
+
 ## File Structure
 
 - `packages/vault-types/src/index.ts` — **Modify.** Add backup contract types (`SnapshotManifest`, `SnapshotSummary`, `SnapshotInspection`, `RestoreResult`, `CreateSnapshotOptions`, `RestoreSnapshotInput`) and the `backup` entry on the renderer API contract.
@@ -182,10 +210,10 @@ Expected: FAIL — `getVaultId` is not a function.
 
 - [ ] **Step 3: Add the migration and accessors**
 
-Add a new entry to the `MIGRATIONS` array (use the next unused version number `N`; verify by reading the array's current max):
+Add a new entry to the `MIGRATIONS` array. **The next unused version is 7** (verified: the array currently ends at version 6):
 ```ts
 {
-  version: N,
+  version: 7,
   run: (db) => {
     db.exec("CREATE TABLE IF NOT EXISTS vault_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);");
     const existing = db.prepare("SELECT value FROM vault_meta WHERE key='vault_id'").get() as { value: string } | undefined;
@@ -260,7 +288,7 @@ test("sqliteLiteralPath forward-slashes and escapes quotes", () => {
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `node --experimental-strip-types --test tests/backup.test.ts`
-Expected: FAIL — module `@orbit/vault-storage/backup` not found. (If the workspace export map does not resolve the subpath, import from the built path used by neighboring modules, or re-export these from `packages/vault-storage/src/index.ts` and import from `@orbit/vault-storage`. Confirm against how existing storage internals are imported in tests.)
+Expected: FAIL — helper not found. **Per audit correction B, there is NO subpath export** (`package.json` exports is the bare string `"./src/index.ts"`). Create `src/backup.ts`, **re-export its helpers from `src/index.ts`**, and import them in tests from `@orbit/vault-storage` (not `@orbit/vault-storage/backup`).
 
 - [ ] **Step 3: Implement the helpers**
 
