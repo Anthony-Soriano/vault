@@ -11,11 +11,12 @@ Design of record: [`docs/superpowers/specs/2026-08-06-bl-03-recovery-backup-desi
 ## Approved scope
 
 - Manual **Create snapshot** (no scheduled/automatic triggers).
-- Snapshot = consistent `vault.db` (`VACUUM INTO`, no `-wal`/`-shm`) **+** verbatim copy of the managed `projects/` tree **+** `manifest.json` with SHA-256 checksums — all captured under one **exclusive Vault write barrier** spanning both the database capture and the file copy.
+- Snapshot = consistent `vault.db` (`VACUUM INTO`, no `-wal`/`-shm`) **+** verbatim copy of the managed `projects/` tree **+** `manifest.json` with SHA-256 checksums — captured under one **exclusive Vault write barrier**, preceded by an explicit **autosave/watcher flush**, and guarded by **before/after fingerprinting of `projects/`** that **aborts** the snapshot if an external program changed files mid-capture.
+- **Persisted, location-independent Vault UUID** (`vault_meta` table via a new migration — the one deliberate schema addition, required by the manifest). Restored Vaults get a **new** UUID plus recorded **lineage** (`restored_from_vault_id` / `restored_from_snapshot_id`), so a restore never duplicates identity.
 - **List / inspect / delete** snapshots; **total disk usage** readout. No auto-deletion (keep all until the user deletes).
-- **Restore into a new, empty directory** only, with checksum + schema-version validation before any copy.
+- **Restore into a new, empty/non-existent directory** only, via **staging + atomic finalization** (checksum + schema-version validated before any target write), so a failed restore never leaves a valid-looking target.
 - New `vault:backup:*` IPC behind the existing `handle(...)` pattern; `window.vault.backup` in preload; a **Backups** renderer panel. Renderer never touches fs/SQLite.
-- Tests per the design: round-trip **logical-state equivalence + managed-file hash equality** (not byte-identical DB), write-barrier consistency, integrity refusal, no half-snapshot, live-Vault safety, schema guard.
+- Tests per the design: round-trip **logical-state equivalence + managed-file hash equality** (not byte-identical DB), write-barrier consistency, **external-change abort**, **pre-barrier flush**, **Vault identity & lineage**, integrity refusal (before any target write), **no half-snapshot / no half-restore**, live-Vault safety, schema guard.
 
 ## Explicit exclusions (stay narrowly scoped)
 
@@ -38,7 +39,7 @@ Feature acceptance is defined in the design's *Acceptance criteria* and *Testing
 
 ## Risks
 
-- **Cross-store consistency** is the core technical risk: the database and managed files are separate stores. Mitigated by the exclusive write barrier spanning both captures; must be proven by the write-barrier consistency test.
+- **Cross-store consistency** is the core technical risk: the database and managed files are separate stores. Mitigated by the exclusive write barrier (for accepted writes) **plus** before/after fingerprint abort (for external writes the barrier cannot stop); both must be proven by test.
 - **`VACUUM INTO` output is not byte-identical** to the source DB — acceptance is deliberately defined as logical + file-hash equivalence to avoid a false failure signal.
 - Remaining P1 release gaps stay deferred (BL-05 accessibility, BL-06 large-Vault stress, BL-08 installed-build regression) and are **not** in this phase.
 - Phase 3 remains the primary future product risk (first non-user writer); unchanged and out of scope here.
@@ -46,7 +47,7 @@ Feature acceptance is defined in the design's *Acceptance criteria* and *Testing
 ## Blockers
 
 - Implementation is blocked until the BL-03 plan is written and owner-approved.
-- Two sub-decisions to close in the plan: `vaultId` sourcing (derive vs. persist) and the write-barrier mechanism (mutation guard + watcher pause/resume).
+- Sub-decisions to close in the plan: the exact write-barrier mechanism (autosave flush + mutation guard + watcher pause/resume) and the fingerprint mechanism (before/after external-change detection). (`vaultId` sourcing is now decided: persisted UUID + restored-Vault lineage.)
 
 ## Deferred ideas
 
