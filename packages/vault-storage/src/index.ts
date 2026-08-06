@@ -2,7 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { createHash, randomUUID } from "node:crypto";
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import type { CreateEvidenceSourceInput, CreateFolderInput, CreateKnowledgeObjectInput, CreateMarkdownInput, CreateProjectInput, CreateRelationshipInput, DocumentFile, EntityStatus, EvidenceSource, Folder, ImportFilesInput, KnowledgeAggregateSnapshot, KnowledgeConfidence, KnowledgeEvidenceLink, KnowledgeFilters, KnowledgeHistoryEvent, KnowledgeHistoryRecord, KnowledgeObject, KnowledgeSearchInput, KnowledgeStatus, MergeKnowledgeInput, MergeKnowledgePreview, MergeKnowledgeResult, MergeRelationshipConflict, Project, ProjectFilters, ReconciliationReport, Relationship, RelationshipEndpointType, RelationshipFilters, RelationshipType, SearchInput, SearchResult, SupersedeKnowledgeInput, UpdateKnowledgeObjectInput, UpdateProjectInput, VaultSnapshot } from "@orbit/vault-types";
+import type { CreateEvidenceSourceInput, CreateFolderInput, CreateKnowledgeObjectInput, CreateMarkdownInput, CreateProjectInput, CreateRelationshipInput, CreateSnapshotOptions, DocumentFile, EntityStatus, EvidenceSource, Folder, ImportFilesInput, KnowledgeAggregateSnapshot, KnowledgeConfidence, KnowledgeEvidenceLink, KnowledgeFilters, KnowledgeHistoryEvent, KnowledgeHistoryRecord, KnowledgeObject, KnowledgeSearchInput, KnowledgeStatus, MergeKnowledgeInput, MergeKnowledgePreview, MergeKnowledgeResult, MergeRelationshipConflict, Project, ProjectFilters, ReconciliationReport, Relationship, RelationshipEndpointType, RelationshipFilters, RelationshipType, RestoreResult, RestoreSnapshotInput, SearchInput, SearchResult, SnapshotInspection, SnapshotManifest, SnapshotSummary, SupersedeKnowledgeInput, UpdateKnowledgeObjectInput, UpdateProjectInput, VaultSnapshot } from "@orbit/vault-types";
 import { VaultDomainError, analyzeKnowledgeIntegrity, type VaultRepository } from "@orbit/vault-core";
 
 type StorageOptions = { vaultRoot: string; developmentMode: boolean; developmentRoot: string };
@@ -260,6 +260,51 @@ export class SqliteVaultRepository implements VaultRepository {
   getVaultMeta(key: string) { const row = this.db.prepare("SELECT value FROM vault_meta WHERE key=?").get(key) as { value: string } | undefined; return row?.value ?? null; }
   setVaultMeta(key: string, value: string) { this.db.prepare("INSERT INTO vault_meta(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(key, value); }
   getVaultId() { const id = this.getVaultMeta("vault_id"); if (!id) throw new Error("Vault UUID missing"); return id; }
+
+  // --- BL-03 Recovery & Backup -------------------------------------------
+  private backupsRoot() { return join(this.options.vaultRoot, "backups"); }
+  private schemaVersion() { return (this.db.prepare("SELECT MAX(version) AS v FROM schema_migrations").get() as { v: number }).v; }
+
+  // internalHooks is a TEST-ONLY seam. It is NOT part of the VaultRepository interface,
+  // and the service/IPC/preload/renderer never pass it. Do not expose it.
+  createSnapshot(options: CreateSnapshotOptions, internalHooks?: { onAfterManagedCopy?: () => void }): SnapshotSummary {
+    const vaultRoot = this.options.vaultRoot;
+    const projectsDir = join(vaultRoot, "projects");
+    const backupsDir = this.backupsRoot();
+    mkdirSync(backupsDir, { recursive: true });
+    const id = randomUUID();
+    const staging = join(backupsDir, `.tmp-${id}`);
+    mkdirSync(join(staging, "projects"), { recursive: true });
+    try {
+      const before = fingerprintTree(projectsDir);
+      // VACUUM INTO folds the WAL into a clean single-file DB; must run outside a transaction.
+      this.db.exec(`VACUUM INTO '${sqliteLiteralPath(join(staging, "vault.db"))}'`);
+      cpSync(projectsDir, join(staging, "projects"), { recursive: true });
+      internalHooks?.onAfterManagedCopy?.();
+      const after = fingerprintTree(projectsDir);
+      if (!treesEqual(before, after)) throw new VaultDomainError("VALIDATION_ERROR", "The Vault changed during capture; snapshot aborted. Try again.");
+      const checksums: Record<string, string> = { "vault.db": hashFile(join(staging, "vault.db")) };
+      for (const [rel, sum] of Object.entries(hashTree(join(staging, "projects")))) checksums[`projects/${rel}`] = sum;
+      const createdAt = now();
+      const manifest: SnapshotManifest = {
+        snapshotVersion: 1,
+        vaultVersion: options.appVersion,
+        createdAt,
+        vaultId: this.getVaultId(),
+        schemaVersion: this.schemaVersion(),
+        projectCount: (this.db.prepare("SELECT COUNT(*) AS c FROM projects").get() as { c: number }).c,
+        checksums,
+      };
+      writeFileSync(join(staging, "manifest.json"), JSON.stringify(manifest, null, 2), "utf8");
+      const finalId = `${createdAt.replace(/[:.]/g, "-")}_${id}`;
+      const finalDir = join(backupsDir, finalId);
+      renameSync(staging, finalDir);
+      return { id: finalId, createdAt, sizeBytes: directorySizeBytes(finalDir), projectCount: manifest.projectCount, schemaVersion: manifest.schemaVersion, vaultVersion: manifest.vaultVersion };
+    } catch (error) {
+      rmSync(staging, { recursive: true, force: true });
+      throw error;
+    }
+  }
 
   createProject(input: CreateProjectInput) {
     const name = this.uniqueProjectName(input.name), id = entityId(), timestamp = now(), storagePath=`${id}/files`;

@@ -107,3 +107,60 @@ test("validateManifestShape flags malformed manifests", () => {
   assert.ok(validateManifestShape({ ...good, schemaVersion: 0 }).length > 0);
   assert.ok(validateManifestShape({ ...good, checksums: { "../evil": "sha256:x" } }).length > 0);
 });
+
+// --- Task 4: createSnapshot capture engine -------------------------------
+
+const seeded = () => {
+  const ctx = repoFixture();
+  const project = ctx.repo.createProject({ name: "Backup me" });
+  ctx.repo.createMarkdownDocument({ projectId: project.id, parentFolderId: null, title: "note", content: "# hello\n" });
+  return { ...ctx, project };
+};
+
+const backupsEntries = (root: string) => existsSync(join(root, "backups")) ? readdirSync(join(root, "backups")) : [];
+
+test("createSnapshot writes a listable snapshot with a manifest and no WAL sidecar", () => {
+  const ctx = seeded();
+  try {
+    const summary = ctx.repo.createSnapshot({ appVersion: "0.2.0" });
+    assert.ok(summary.id.length > 0);
+    assert.equal(summary.projectCount, 1);
+    const dir = join(ctx.root, "backups", summary.id);
+    assert.ok(existsSync(join(dir, "manifest.json")));
+    assert.ok(existsSync(join(dir, "vault.db")));
+    assert.equal(existsSync(join(dir, "vault.db-wal")), false);
+    assert.equal(existsSync(join(dir, "vault.db-shm")), false);
+    assert.ok(existsSync(join(dir, "projects")));
+    assert.equal(backupsEntries(ctx.root).some((n) => n.startsWith(".tmp-")), false);
+    const manifest = JSON.parse(readFileSync(join(dir, "manifest.json"), "utf8"));
+    assert.equal(manifest.snapshotVersion, 1);
+    assert.ok(manifest.checksums["vault.db"].startsWith("sha256:"));
+  } finally { ctx.dispose(); }
+});
+
+test("createSnapshot aborts when projects/ changes during capture (external change)", () => {
+  const ctx = seeded();
+  try {
+    let fired = false;
+    assert.throws(() => ctx.repo.createSnapshot({ appVersion: "0.2.0" }, {
+      onAfterManagedCopy: () => { fired = true; writeFileSync(join(ctx.root, "projects", "intruder.txt"), "changed during capture"); },
+    }));
+    assert.equal(fired, true);
+    // no listable snapshot, no leftover temp dir
+    assert.equal(backupsEntries(ctx.root).filter((n) => !n.startsWith(".tmp-")).length, 0);
+    assert.equal(backupsEntries(ctx.root).some((n) => n.startsWith(".tmp-")), false);
+    // live Vault unchanged: still one project
+    assert.equal(ctx.repo.listProjects().length, 1);
+  } finally { ctx.dispose(); }
+});
+
+test("createSnapshot leaves no half-snapshot when capture fails mid-way", () => {
+  const ctx = seeded();
+  try {
+    assert.throws(() => ctx.repo.createSnapshot({ appVersion: "0.2.0" }, {
+      onAfterManagedCopy: () => { throw new Error("boom"); },
+    }));
+    assert.equal(backupsEntries(ctx.root).length, 0);
+    assert.equal(ctx.repo.listProjects().length, 1);
+  } finally { ctx.dispose(); }
+});
