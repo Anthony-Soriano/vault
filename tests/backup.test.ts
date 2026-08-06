@@ -164,3 +164,68 @@ test("createSnapshot leaves no half-snapshot when capture fails mid-way", () => 
     assert.equal(ctx.repo.listProjects().length, 1);
   } finally { ctx.dispose(); }
 });
+
+// --- Task 5: list / inspect / delete / disk usage ------------------------
+
+test("list/inspect/delete snapshots round-trip", () => {
+  const ctx = seeded();
+  try {
+    const a = ctx.repo.createSnapshot({ appVersion: "0.2.0" });
+    const list = ctx.repo.listSnapshots();
+    assert.equal(list.length, 1);
+    assert.equal(list[0].id, a.id);
+    const inspection = ctx.repo.inspectSnapshot(a.id);
+    assert.equal(inspection.integrityOk, true);
+    assert.deepEqual(inspection.problems, []);
+    assert.ok(ctx.repo.backupsDiskUsage().totalBytes > 0);
+    assert.equal(ctx.repo.backupsDiskUsage().count, 1);
+    ctx.repo.deleteSnapshot(a.id);
+    assert.equal(ctx.repo.listSnapshots().length, 0);
+  } finally { ctx.dispose(); }
+});
+
+test("inspect flags a corrupted snapshot database", () => {
+  const ctx = seeded();
+  try {
+    const a = ctx.repo.createSnapshot({ appVersion: "0.2.0" });
+    writeFileSync(join(ctx.root, "backups", a.id, "vault.db"), "corrupted");
+    const inspection = ctx.repo.inspectSnapshot(a.id);
+    assert.equal(inspection.integrityOk, false);
+    assert.ok(inspection.problems.some((p) => p.includes("vault.db")));
+  } finally { ctx.dispose(); }
+});
+
+test("inspect flags an unexpected extra file and a missing file", () => {
+  const ctx = seeded();
+  try {
+    const a = ctx.repo.createSnapshot({ appVersion: "0.2.0" });
+    writeFileSync(join(ctx.root, "backups", a.id, "projects", "surprise.txt"), "extra");
+    const withExtra = ctx.repo.inspectSnapshot(a.id);
+    assert.equal(withExtra.integrityOk, false);
+    assert.ok(withExtra.problems.some((p) => p.toLowerCase().includes("unexpected")));
+
+    const b = ctx.repo.createSnapshot({ appVersion: "0.2.0" });
+    rmSync(join(ctx.root, "backups", b.id, "projects"), { recursive: true, force: true });
+    const withMissing = ctx.repo.inspectSnapshot(b.id);
+    assert.equal(withMissing.integrityOk, false);
+    assert.ok(withMissing.problems.some((p) => p.toLowerCase().includes("missing")));
+  } finally { ctx.dispose(); }
+});
+
+test("listSnapshots ignores temp and staging artifacts", () => {
+  const ctx = seeded();
+  try {
+    ctx.repo.createSnapshot({ appVersion: "0.2.0" });
+    mkdirSync(join(ctx.root, "backups", ".tmp-abc"), { recursive: true });
+    mkdirSync(join(ctx.root, "backups", "target.restoring-xyz"), { recursive: true });
+    assert.equal(ctx.repo.listSnapshots().length, 1);
+  } finally { ctx.dispose(); }
+});
+
+test("snapshot id path traversal is rejected", () => {
+  const ctx = seeded();
+  try {
+    assert.throws(() => ctx.repo.inspectSnapshot("../../etc"));
+    assert.throws(() => ctx.repo.deleteSnapshot("../../etc"));
+  } finally { ctx.dispose(); }
+});

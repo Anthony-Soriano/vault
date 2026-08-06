@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { CreateEvidenceSourceInput, CreateFolderInput, CreateKnowledgeObjectInput, CreateMarkdownInput, CreateProjectInput, CreateRelationshipInput, CreateSnapshotOptions, DocumentFile, EntityStatus, EvidenceSource, Folder, ImportFilesInput, KnowledgeAggregateSnapshot, KnowledgeConfidence, KnowledgeEvidenceLink, KnowledgeFilters, KnowledgeHistoryEvent, KnowledgeHistoryRecord, KnowledgeObject, KnowledgeSearchInput, KnowledgeStatus, MergeKnowledgeInput, MergeKnowledgePreview, MergeKnowledgeResult, MergeRelationshipConflict, Project, ProjectFilters, ReconciliationReport, Relationship, RelationshipEndpointType, RelationshipFilters, RelationshipType, RestoreResult, RestoreSnapshotInput, SearchInput, SearchResult, SnapshotInspection, SnapshotManifest, SnapshotSummary, SupersedeKnowledgeInput, UpdateKnowledgeObjectInput, UpdateProjectInput, VaultSnapshot } from "@orbit/vault-types";
-import { VaultDomainError, analyzeKnowledgeIntegrity, type VaultRepository } from "@orbit/vault-core";
+import { VaultDomainError, analyzeKnowledgeIntegrity, assertIdentifier, type VaultRepository } from "@orbit/vault-core";
 
 type StorageOptions = { vaultRoot: string; developmentMode: boolean; developmentRoot: string };
 type DbRow = Record<string, string | null>;
@@ -304,6 +304,57 @@ export class SqliteVaultRepository implements VaultRepository {
       rmSync(staging, { recursive: true, force: true });
       throw error;
     }
+  }
+
+  private snapshotDir(snapshotId: string) { return join(this.backupsRoot(), assertIdentifier(snapshotId)); }
+  private readManifest(snapshotId: string): SnapshotManifest {
+    const dir = this.snapshotDir(snapshotId);
+    if (!existsSync(join(dir, "manifest.json"))) throw notFound("Snapshot");
+    return JSON.parse(readFileSync(join(dir, "manifest.json"), "utf8")) as SnapshotManifest;
+  }
+
+  listSnapshots(): SnapshotSummary[] {
+    const backupsDir = this.backupsRoot();
+    if (!existsSync(backupsDir)) return [];
+    const out: SnapshotSummary[] = [];
+    for (const name of readdirSync(backupsDir)) {
+      if (name.startsWith(".tmp-") || name.includes(".restoring-")) continue;
+      const dir = join(backupsDir, name);
+      if (!existsSync(join(dir, "manifest.json"))) continue;
+      const m = JSON.parse(readFileSync(join(dir, "manifest.json"), "utf8")) as SnapshotManifest;
+      out.push({ id: name, createdAt: m.createdAt, sizeBytes: directorySizeBytes(dir), projectCount: m.projectCount, schemaVersion: m.schemaVersion, vaultVersion: m.vaultVersion });
+    }
+    return out.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  inspectSnapshot(snapshotId: string): SnapshotInspection {
+    const manifest = this.readManifest(snapshotId);
+    const dir = this.snapshotDir(snapshotId);
+    const problems = validateManifestShape(manifest);
+    // Exact bijection: files present under the snapshot (excluding manifest.json) must equal the checksum key set.
+    const expected = new Set(Object.keys(manifest.checksums));
+    const present = new Set<string>();
+    if (existsSync(join(dir, "vault.db"))) present.add("vault.db");
+    const projectsDir = join(dir, "projects");
+    if (existsSync(projectsDir)) for (const rel of Object.keys(hashTree(projectsDir))) present.add(`projects/${rel}`);
+    for (const key of expected) {
+      if (!present.has(key)) { problems.push(`missing file: ${key}`); continue; }
+      const abs = join(dir, key);
+      if (hashFile(abs) !== manifest.checksums[key]) problems.push(`checksum mismatch: ${key}`);
+    }
+    for (const key of present) if (!expected.has(key)) problems.push(`unexpected file: ${key}`);
+    return { manifest, integrityOk: problems.length === 0, problems };
+  }
+
+  deleteSnapshot(snapshotId: string): { id: string } {
+    this.readManifest(snapshotId); // validates id + existence
+    rmSync(this.snapshotDir(snapshotId), { recursive: true, force: true });
+    return { id: snapshotId };
+  }
+
+  backupsDiskUsage(): { totalBytes: number; count: number } {
+    const list = this.listSnapshots();
+    return { totalBytes: list.reduce((n, s) => n + s.sizeBytes, 0), count: list.length };
   }
 
   createProject(input: CreateProjectInput) {
