@@ -2,7 +2,7 @@
 
 These files are **superseded and kept for reference only.** They were the primary docs before the canonical set was established, and they may contain stale phase/status claims. Do not treat anything here as current.
 
-**Canonical docs live in the repo root** — start at [`/AGENTS.md`](../../AGENTS.md) and follow its reading order (`PROJECT.md` → `PRODUCT_SPEC.md` → `ARCHITECTURE.md` → `DECISIONS.md` → `ROADMAP.md` → `CURRENT_PHASE.md`).
+**Canonical docs live in `.orbit/`** — start at [`/AGENTS.md`](../../AGENTS.md) and follow its reading order (`.orbit/PROJECT.md` → `.orbit/PRODUCT_SPEC.md` → `.orbit/ARCHITECTURE.md` → `.orbit/DECISIONS.md` → `.orbit/ROADMAP.md` → `.orbit/CURRENT_PHASE.md` → `.orbit/BACKLOG.md`).
 
 | File | Was | Superseded by |
 |---|---|---|

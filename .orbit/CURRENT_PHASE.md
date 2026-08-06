@@ -1,7 +1,7 @@
 CURRENT_PHASE.md
 Only Phase 3 once planning begins:
 
-This is the operational center. Do not implement work that is absent from this file (Rule 3). Update it after completed work (Rule 9).
+This is the operational center. Do not implement work that is absent from this file (Rule 3, root `AGENTS.md`). Update it after completed work (Rule 9, root `AGENTS.md`).
 
 **State: BETWEEN PHASES.** Phase 2 is complete and locked at tag `v0.2.0`. Phase 3 planning has **not** begun, so there is no approved implementation scope. Until this file is populated with owner-approved Phase 3 content, no feature work should be started.
 
@@ -11,7 +11,7 @@ None active. Phase 2 (manual knowledge system) is complete. Awaiting owner-appro
 
 ## Approved scope
 
-None. (Nothing is approved for implementation. New ideas go to `docs/BACKLOG.md`, not here — Rule 10.)
+None. (Nothing is approved for implementation. New ideas go to `.orbit/BACKLOG.md`, not here — Rule 10, root `AGENTS.md`.)
 
 ## Active tasks
 
@@ -33,7 +33,7 @@ Not applicable while no phase is active. The standing verification gate for any 
 
 ## Deferred ideas
 
-Tracked in `docs/BACKLOG.md` (BL-01 … BL-08). Do not pull them into active work without owner approval and an entry in this file.
+Tracked in `.orbit/BACKLOG.md` (BL-01 … BL-08). Do not pull them into active work without owner approval and an entry in this file.
 
 ## Last verified commit
 

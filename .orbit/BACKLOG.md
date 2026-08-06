@@ -2,6 +2,8 @@
 
 Deferred work, tracked so phases can be formally closed without losing scope. Created 2026-08-06 from the Phase 1.2 / 1.3 reconciliation audit. Items are **not** on any active milestone; pull them into a phase when prioritized.
 
+> An item in this file is not approved implementation scope. It may move into active work only with explicit owner approval and an entry in `.orbit/CURRENT_PHASE.md`.
+
 Priority key: **P1** (should do before broad release) · **P2** (valuable, not blocking) · **P3** (nice to have).
 
 ## From Phase 1.2 (file lifecycle)

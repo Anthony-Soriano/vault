@@ -36,11 +36,21 @@ The complete product contract:
 
 **Implemented (v0.2.0):** Vault CRUD & multi-Vault isolation; project/folder/document CRUD; Markdown autosave; general file import; native open/reveal; archive/trash/restore; lexical search; filesystem reconciliation + watcher; knowledge objects; evidence; typed relationships/backlinks; folder assignment; Atlas with overlays; immutable knowledge history; supersede; transactional deterministic merge; deterministic integrity analysis + review panel.
 
-**Planned (see ROADMAP):** AI proposal pipeline (Phase 3); derived Project DNA (Phase 4); semantic drift detection (Phase 5); stable public API (Phase 6). Deferred robustness items in `docs/BACKLOG.md`.
+**Planned (see `.orbit/ROADMAP.md`):** AI proposal pipeline (Phase 3); derived Project DNA (Phase 4); semantic drift detection (Phase 5); stable public API (Phase 6). Deferred robustness items in `.orbit/BACKLOG.md`.
 
 ## V1 boundaries
 
 Built around the five canonical entities. No AI provider, no automatic mutation, no cloud sync, no cross-project context leakage. Atlas is a projection, not a database.
+
+## Non-goals
+
+- Not a cloud-first notes service.
+- Not an autonomous agent that silently edits canonical project memory.
+- Not a coding IDE.
+- Not a replacement for Git or source control.
+- Not a graph database whose visualization becomes the source of truth.
+- Not a generic chatbot with hidden memory.
+- Not a required cloud-sync platform.
 
 ## Trust and safety rules
 

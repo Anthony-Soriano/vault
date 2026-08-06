@@ -19,6 +19,10 @@ Note and knowledge tools force a bad trade: cloud tools take custody of your dat
 
 Models may eventually *propose* knowledge, but never silently mutate it. Confidence is metadata, not truth.
 
+## Why Orbit Vault exists
+
+AI allows projects to grow and change faster than people can keep them understandable. Orbit Vault exists to preserve project understanding as complexity increases, so users and their tools can determine what the project is, why decisions were made, and what remains true.
+
 ## Product principles
 
 - **Local-first.** State lives on the user's machine; no required cloud.
@@ -34,8 +38,8 @@ Not a cloud notes app. Not a graph-database UI. Not an autonomous agent that edi
 
 ## Current status
 
-**v0.2.0 — Phase 2 complete.** The manual knowledge system is done: projects, folders, documents/files, knowledge objects, typed relationships, evidence, plus the Phase 2.4 lifecycle (history / supersede / merge) and deterministic integrity checks. No AI subsystem exists yet. Phase 3 (AI proposals) is the next milestone and is **not yet planned**. Deferred Phase 1.2/1.3 items are tracked in `docs/BACKLOG.md`.
+**v0.2.0 — Phase 2 complete.** The manual knowledge system is done: projects, folders, documents/files, knowledge objects, typed relationships, evidence, plus the Phase 2.4 lifecycle (history / supersede / merge) and deterministic integrity checks. No AI subsystem exists yet. Phase 3 (AI proposals) is the next milestone and is **not yet planned**. Deferred Phase 1.2/1.3 items are tracked in `.orbit/BACKLOG.md`.
 
 ## Reading order
 
-`AGENTS.md` → `PROJECT.md` → `PRODUCT_SPEC.md` → `ARCHITECTURE.md` → `DECISIONS.md` → `ROADMAP.md` → `CURRENT_PHASE.md`.
+`AGENTS.md` → `.orbit/PROJECT.md` → `.orbit/PRODUCT_SPEC.md` → `.orbit/ARCHITECTURE.md` → `.orbit/DECISIONS.md` → `.orbit/ROADMAP.md` → `.orbit/CURRENT_PHASE.md` → `.orbit/BACKLOG.md`.

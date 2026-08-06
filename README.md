@@ -6,19 +6,25 @@
 
 **Product rule:** Documents are source material. Knowledge objects are interpretations. Evidence connects the two. Users stay in control — AI may propose, never silently mutate.
 
-## Canonical documentation
+## Project Truth
 
-Read in order (agents: see the rules in [`AGENTS.md`](AGENTS.md) first):
+Read in order:
 
 1. [`AGENTS.md`](AGENTS.md) — operating rules for every contributor/model.
-2. [`PROJECT.md`](PROJECT.md) — what Orbit Vault is and who it's for.
-3. [`PRODUCT_SPEC.md`](PRODUCT_SPEC.md) — the complete product contract.
-4. [`ARCHITECTURE.md`](ARCHITECTURE.md) — verified technical reality.
-5. [`DECISIONS.md`](DECISIONS.md) — locked decisions and why.
-6. [`ROADMAP.md`](ROADMAP.md) — the ordered journey and definitions of done.
-7. [`CURRENT_PHASE.md`](CURRENT_PHASE.md) — the operational center; only implement what's here.
+2. [`.orbit/PROJECT.md`](.orbit/PROJECT.md) — identity, audience, problem, thesis, principles, non-goals.
+3. [`.orbit/PRODUCT_SPEC.md`](.orbit/PRODUCT_SPEC.md) — the complete product contract.
+4. [`.orbit/ARCHITECTURE.md`](.orbit/ARCHITECTURE.md) — verified implemented technical reality.
+5. [`.orbit/DECISIONS.md`](.orbit/DECISIONS.md) — binding decisions and rationale.
+6. [`.orbit/ROADMAP.md`](.orbit/ROADMAP.md) — the ordered journey and definitions of done.
+7. [`.orbit/CURRENT_PHASE.md`](.orbit/CURRENT_PHASE.md) — the only approved active implementation scope.
+8. [`.orbit/BACKLOG.md`](.orbit/BACKLOG.md) — deferred ideas with no active authorization.
 
-Supporting: [`docs/SETUP.md`](docs/SETUP.md) · [`docs/BACKLOG.md`](docs/BACKLOG.md) · [`docs/architecture.md`](docs/architecture.md) (deep reference) · [`docs/superpowers/`](docs/superpowers) (specs & plans). Superseded material lives in [`docs/history/`](docs/history).
+Where things live:
+
+- **`README.md`** is the human entry point.
+- **`AGENTS.md`** contains the operating rules for anyone (person or model) doing work.
+- **`.orbit/`** is the authoritative project truth: product, architecture, decisions, roadmap, active phase, and backlog.
+- **`docs/`** contains setup material, deeper references, implementation plans, and history — **not** competing canonical truth.
 
 ## Quick start
 
@@ -38,14 +44,19 @@ Static UI/IPC contract check: `node scripts/phase2-lifecycle-ui-regression.mjs`.
 ## Project layout
 
 ```
+README.md                 human entry point
+AGENTS.md                 operating rules
+.orbit/                   authoritative project truth
+  PROJECT.md  PRODUCT_SPEC.md  ARCHITECTURE.md  DECISIONS.md
+  ROADMAP.md  CURRENT_PHASE.md  BACKLOG.md
 packages/vault-types      shared types + IPC contract
 packages/vault-core       validation, use cases, pure analyzers
 packages/vault-storage    SQLite (node:sqlite) + local-file persistence
 apps/vault-desktop        Electron main/preload + React/Vite renderer
-docs/                     canonical set is at repo root; supporting & history here
+docs/                     setup, deep references, plans, and history (supporting)
 tests/                    Node built-in test runner suites
 ```
 
 ## Architecture in one line
 
-`Electron main → typed IPC → preload (window.vault) → React renderer → VaultService → SqliteVaultRepository`. The renderer never touches Node, SQLite, or the filesystem directly. See [`ARCHITECTURE.md`](ARCHITECTURE.md).
+`Electron main → typed IPC → preload (window.vault) → React renderer → VaultService → SqliteVaultRepository`. The renderer never touches Node, SQLite, or the filesystem directly. See [`.orbit/ARCHITECTURE.md`](.orbit/ARCHITECTURE.md).

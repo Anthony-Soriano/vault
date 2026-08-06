@@ -1,4 +1,4 @@
-> **Supporting reference.** The canonical architecture is `/ARCHITECTURE.md` at the repo root. This file is deeper design detail (entity fields, phase contracts) and may lag current code.
+> **Supporting reference.** The canonical architecture is `.orbit/ARCHITECTURE.md`. This file is deeper design detail (entity fields, phase contracts) and may lag current code.
 
 # Orbit Vault Architecture
 

@@ -1,7 +1,7 @@
 ROADMAP.md
 The entire ordered journey:
 
-Status reflects `main` / tag `v0.2.0`. "Planned" phases are not scope until written into `CURRENT_PHASE.md` with owner approval (Rule 3).
+Status reflects `main` / tag `v0.2.0`. "Planned" phases are not scope until written into `.orbit/CURRENT_PHASE.md` with owner approval (Rule 3 in root `AGENTS.md`).
 
 ## Completed phases
 
@@ -18,7 +18,7 @@ Status reflects `main` / tag `v0.2.0`. "Planned" phases are not scope until writ
 ### Phase 1.2 / 1.3 — File lifecycle & robustness ◐ closed, remainder in backlog
 - **Objective:** file import/export, reveal/open, external change detection, and release robustness.
 - **Implemented:** general file import; attachments (as canonical Document/File); reveal/open in Explorer; external change detection (watcher + reconcile).
-- **Deferred (see `docs/BACKLOG.md`):** in-app drag & drop (BL-01), export (BL-02), recovery/backup (BL-03), diagnostics (BL-04), accessibility (BL-05), large-Vault stress testing (BL-06), watcher hardening (BL-07), installed-build regression/polish (BL-08).
+- **Deferred (see `.orbit/BACKLOG.md`):** in-app drag & drop (BL-01), export (BL-02), recovery/backup (BL-03), diagnostics (BL-04), accessibility (BL-05), large-Vault stress testing (BL-06), watcher hardening (BL-07), installed-build regression/polish (BL-08).
 - **Disposition:** closed with deferred items tracked; not silently incomplete.
 
 ### Phase 2.0–2.4 — Manual knowledge system ✅
@@ -30,13 +30,13 @@ Status reflects `main` / tag `v0.2.0`. "Planned" phases are not scope until writ
 
 ## Current phase
 
-**Between phases — Phase 2 baseline locked (`v0.2.0`); Phase 3 not yet planned.** No active implementation scope until `CURRENT_PHASE.md` is populated with owner-approved Phase 3 scope. See `CURRENT_PHASE.md`.
+**Between phases — Phase 2 baseline locked (`v0.2.0`); Phase 3 not yet planned.** No active implementation scope until `.orbit/CURRENT_PHASE.md` is populated with owner-approved Phase 3 scope. See `.orbit/CURRENT_PHASE.md`.
 
 ## Future phases
 
 ### Phase 3 — AI proposals ⬜ (next major)
 - **Objective:** AI proposes cited candidate knowledge; the user approves.
-- **Dependencies:** complete manual system + deterministic integrity (done), plus a model provider (e.g., local Ollama).
+- **Dependencies:** complete manual system + deterministic integrity (done), plus a model provider. (No provider is approved; a local model such as Ollama is one example only, not a decision.)
 - **Deliverables:** project-scoped assistant, transparent context builder, evidence-cited proposals, approve/edit/merge/reject flow.
 - **Done when:** AI can propose knowledge with provenance that the user reviews before anything becomes canonical; no direct DB access; no silent mutation.
 - **Exclusions:** autonomous mutation, hidden memory, cross-project context leakage.
