@@ -1,4 +1,3 @@
-DECISIONS.md
 Locked decisions and why:
 
 Each decision is binding. Changing one requires explicit owner approval and an update here (Rules 2, 4).

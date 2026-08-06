@@ -1,4 +1,3 @@
-PRODUCT_SPEC.md
 The complete product contract:
 
 ## Target users

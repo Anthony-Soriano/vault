@@ -1,4 +1,3 @@
-AGENTS.md
 Rules for every coding model:
 1. Read these files in order.
 2. Never reinterpret the product vision.

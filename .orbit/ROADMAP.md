@@ -1,4 +1,3 @@
-ROADMAP.md
 The entire ordered journey:
 
 Status reflects `main` / tag `v0.2.0`. "Planned" phases are not scope until written into `.orbit/CURRENT_PHASE.md` with owner approval (Rule 3 in root `AGENTS.md`).

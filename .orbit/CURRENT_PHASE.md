@@ -1,4 +1,3 @@
-CURRENT_PHASE.md
 Only Phase 3 once planning begins:
 
 This is the operational center. Do not implement work that is absent from this file (Rule 3, root `AGENTS.md`). Update it after completed work (Rule 9, root `AGENTS.md`).

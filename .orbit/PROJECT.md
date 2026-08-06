@@ -1,4 +1,3 @@
-PROJECT.md
 A readable overview:
 
 ## What Orbit Vault is

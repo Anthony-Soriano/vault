@@ -1,4 +1,3 @@
-ARCHITECTURE.md
 Only verified technical reality:
 
 (Reflects code at `main` / tag `v0.2.0`. State only what exists — Rule 5.)
