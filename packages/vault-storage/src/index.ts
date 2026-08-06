@@ -104,6 +104,13 @@ const MIGRATIONS: Migration[] = [{
 }, {
   version: 6,
   run: migrateEvidenceLinks,
+}, {
+  version: 7,
+  run: (db) => {
+    db.exec("CREATE TABLE IF NOT EXISTS vault_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);");
+    const existing = db.prepare("SELECT value FROM vault_meta WHERE key='vault_id'").get() as { value: string } | undefined;
+    if (!existing) db.prepare("INSERT INTO vault_meta(key, value) VALUES ('vault_id', ?)").run(randomUUID());
+  },
 }];
 
 function migrateEvidenceLinks(db: DatabaseSync) {
@@ -192,6 +199,10 @@ export class SqliteVaultRepository implements VaultRepository {
   close() { this.database?.close(); this.database = null; }
   private get db() { if (!this.database) throw new Error("Vault database is not initialized"); return this.database; }
   private transaction<T>(operation: () => T): T { this.db.exec("BEGIN IMMEDIATE"); try { const value = operation(); this.db.exec("COMMIT"); return value; } catch (error) { this.db.exec("ROLLBACK"); throw error; } }
+
+  getVaultMeta(key: string) { const row = this.db.prepare("SELECT value FROM vault_meta WHERE key=?").get(key) as { value: string } | undefined; return row?.value ?? null; }
+  setVaultMeta(key: string, value: string) { this.db.prepare("INSERT INTO vault_meta(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(key, value); }
+  getVaultId() { const id = this.getVaultMeta("vault_id"); if (!id) throw new Error("Vault UUID missing"); return id; }
 
   createProject(input: CreateProjectInput) {
     const name = this.uniqueProjectName(input.name), id = entityId(), timestamp = now(), storagePath=`${id}/files`;
