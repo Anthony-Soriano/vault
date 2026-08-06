@@ -4,6 +4,7 @@ import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, renameSy
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { DatabaseSync } from "node:sqlite";
+import { VaultService } from "@orbit/vault-core";
 import { SqliteVaultRepository, hashTree, fingerprintTree, treesEqual, sqliteLiteralPath, isSafeRelPosixPath, validateManifestShape } from "@orbit/vault-storage";
 
 const repoFixture = () => {
@@ -316,5 +317,22 @@ test("restore refuses when the target already exists", () => {
     const snap = ctx.repo.createSnapshot({ appVersion: "0.2.0" });
     mkdirSync(join(ctx.root, "exists"), { recursive: true });
     assert.throws(() => ctx.repo.restoreSnapshotToNewVault({ snapshotId: snap.id, parentPath: ctx.root, folderName: "exists" }));
+  } finally { ctx.dispose(); }
+});
+
+// --- Task 7: VaultService.backup facade ----------------------------------
+
+test("VaultService exposes a backup facade over the repository", () => {
+  const ctx = repoFixture();
+  const service = new VaultService(ctx.repo);
+  ctx.repo.createProject({ name: "Facade" });
+  try {
+    const summary = service.backup.create({ appVersion: "0.2.0" });
+    assert.equal(service.backup.list()[0].id, summary.id);
+    assert.equal(service.backup.inspect(summary.id).integrityOk, true);
+    assert.ok(service.backup.diskUsage().totalBytes > 0);
+    assert.throws(() => service.backup.inspect("../../etc"));
+    service.backup.delete(summary.id);
+    assert.equal(service.backup.list().length, 0);
   } finally { ctx.dispose(); }
 });
