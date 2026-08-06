@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
-import { randomUUID } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { CreateEvidenceSourceInput, CreateFolderInput, CreateKnowledgeObjectInput, CreateMarkdownInput, CreateProjectInput, CreateRelationshipInput, DocumentFile, EntityStatus, EvidenceSource, Folder, ImportFilesInput, KnowledgeAggregateSnapshot, KnowledgeConfidence, KnowledgeEvidenceLink, KnowledgeFilters, KnowledgeHistoryEvent, KnowledgeHistoryRecord, KnowledgeObject, KnowledgeSearchInput, KnowledgeStatus, MergeKnowledgeInput, MergeKnowledgePreview, MergeKnowledgeResult, MergeRelationshipConflict, Project, ProjectFilters, ReconciliationReport, Relationship, RelationshipEndpointType, RelationshipFilters, RelationshipType, SearchInput, SearchResult, SupersedeKnowledgeInput, UpdateKnowledgeObjectInput, UpdateProjectInput, VaultSnapshot } from "@orbit/vault-types";
 import { VaultDomainError, analyzeKnowledgeIntegrity, type VaultRepository } from "@orbit/vault-core";
@@ -12,6 +12,63 @@ type MergePlan = MergeKnowledgePreview & {
   evidenceActions: {link:KnowledgeEvidenceLink;action:"transfer"|"delete"}[];
   relationshipActions: {relationship:Relationship;action:"redirect"|"delete"}[];
 };
+
+// --- BL-03 backup helpers (exported for tests; kept in-file because module:NodeNext
+// and node --experimental-strip-types disagree on relative .ts import specifiers) ---
+const toPosix = (p: string) => p.split(sep).join("/");
+function* walkFiles(rootDir: string): Generator<string> {
+  for (const entry of readdirSync(rootDir, { withFileTypes: true })) {
+    const abs = join(rootDir, entry.name);
+    if (entry.isDirectory()) yield* walkFiles(abs);
+    else if (entry.isFile()) yield abs;
+  }
+}
+const sortEntries = (record: Record<string, string>) => Object.fromEntries(Object.entries(record).sort(([a], [b]) => a.localeCompare(b)));
+export function hashFile(absPath: string): string { return "sha256:" + createHash("sha256").update(readFileSync(absPath)).digest("hex"); }
+export function hashTree(rootDir: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const abs of walkFiles(rootDir)) out[toPosix(relative(rootDir, abs))] = hashFile(abs);
+  return sortEntries(out);
+}
+export function fingerprintTree(rootDir: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const abs of walkFiles(rootDir)) { const s = statSync(abs); out[toPosix(relative(rootDir, abs))] = `${s.size}:${s.mtimeMs}`; }
+  return sortEntries(out);
+}
+export function treesEqual(a: Record<string, string>, b: Record<string, string>): boolean {
+  const ak = Object.keys(a), bk = Object.keys(b);
+  return ak.length === bk.length && ak.every((k) => a[k] === b[k]);
+}
+export function sqliteLiteralPath(absPath: string): string { return absPath.split("\\").join("/").split("'").join("''"); }
+export function directorySizeBytes(rootDir: string): number { let total = 0; for (const abs of walkFiles(rootDir)) total += statSync(abs).size; return total; }
+export function isSafeRelPosixPath(p: string): boolean {
+  if (typeof p !== "string" || p.length === 0) return false;
+  if (p.includes("\\") || p.startsWith("/") || /^[A-Za-z]:/.test(p)) return false;
+  return !p.split("/").some((s) => s === "" || s === "." || s === "..");
+}
+const isoTimestamp = (value: unknown): boolean => typeof value === "string" && value.length > 0 && !Number.isNaN(Date.parse(value));
+const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const isInt = (v: unknown, min: number): boolean => typeof v === "number" && Number.isInteger(v) && v >= min;
+// Structural validation of a parsed manifest ([] = valid). Detects corruption/accidental
+// modification, NOT forgery — BL-03 adds no cryptographic authenticity.
+export function validateManifestShape(manifest: unknown): string[] {
+  const problems: string[] = [];
+  if (typeof manifest !== "object" || manifest === null) return ["manifest is not an object"];
+  const m = manifest as Record<string, unknown>;
+  if (m.snapshotVersion !== 1) problems.push("unsupported snapshotVersion (expected 1)");
+  if (typeof m.vaultVersion !== "string" || m.vaultVersion.length === 0) problems.push("vaultVersion must be a non-empty string");
+  if (!isoTimestamp(m.createdAt)) problems.push("createdAt must be a valid ISO timestamp");
+  if (typeof m.vaultId !== "string" || !uuidRe.test(m.vaultId)) problems.push("vaultId must be a UUID");
+  if (!isInt(m.schemaVersion, 1)) problems.push("schemaVersion must be an integer >= 1");
+  if (!isInt(m.projectCount, 0)) problems.push("projectCount must be an integer >= 0");
+  if (typeof m.checksums !== "object" || m.checksums === null) { problems.push("checksums must be an object"); }
+  else for (const [key, value] of Object.entries(m.checksums as Record<string, unknown>)) {
+    if (!isSafeRelPosixPath(key)) problems.push(`unsafe checksum path: ${key}`);
+    else if (key !== "vault.db" && !key.startsWith("projects/")) problems.push(`unexpected checksum target: ${key}`);
+    if (typeof value !== "string" || !value.startsWith("sha256:")) problems.push(`invalid checksum value for ${key}`);
+  }
+  return problems;
+}
 
 const safeLinkedKind=(path:string,allowedRoot:string):"directory"|"file"|null=>{try{const resolved=realpathSync.native(path),within=relative(realpathSync.native(allowedRoot),resolved);if(within.startsWith(`..${sep}`)||within===".."||isAbsolute(within))return null;const stats=statSync(path);return stats.isDirectory()?"directory":stats.isFile()?"file":null;}catch{return null;}};
 
