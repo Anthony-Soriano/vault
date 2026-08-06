@@ -1,7 +1,8 @@
 import type {
   CreateEvidenceSourceInput, CreateFolderInput, CreateKnowledgeObjectInput, CreateMarkdownInput, CreateProjectInput, CreateRelationshipInput, DocumentFile, EntityStatus, ImportFilesInput,
-  EvidenceSource, Folder, KnowledgeFilters, KnowledgeObject, KnowledgeSearchInput, KnowledgeStatus, Project, ProjectFilters,
+  EvidenceSource, Folder, KnowledgeEvidenceLink, KnowledgeFilters, KnowledgeHistoryRecord, KnowledgeObject, KnowledgeSearchInput, KnowledgeStatus, MergeKnowledgeInput, MergeKnowledgePreview, MergeKnowledgeResult, Project, ProjectFilters, SupersedeKnowledgeInput,
   ReconciliationReport, Relationship, RelationshipFilters, SearchInput, SearchResult, UpdateKnowledgeObjectInput, UpdateProjectInput, VaultSnapshot,
+  IntegrityAnalyzerInput, IntegrityFinding, IntegrityFindingKind, IntegrityReport, IntegritySeverity,
 } from "@orbit/vault-types";
 
 export class VaultDomainError extends Error {
@@ -65,11 +66,17 @@ export interface KnowledgeRepository {
   listKnowledgeObjects(filters: KnowledgeFilters): KnowledgeObject[];
   updateKnowledgeObject(id: string, changes: UpdateKnowledgeObjectInput): KnowledgeObject;
   setKnowledgeStatus(id: string, status: KnowledgeStatus): KnowledgeObject;
+  restoreKnowledgeObject(id: string, reason: string | null): KnowledgeObject;
+  supersedeKnowledgeObject(input: SupersedeKnowledgeInput): KnowledgeObject;
+  previewKnowledgeMerge(input: MergeKnowledgeInput): MergeKnowledgePreview;
+  mergeKnowledgeObjects(input: MergeKnowledgeInput): MergeKnowledgeResult;
+  listKnowledgeHistory(knowledgeObjectId: string): KnowledgeHistoryRecord[];
   searchKnowledge(input: KnowledgeSearchInput): KnowledgeObject[];
 }
 export interface EvidenceRepository {
   attachEvidence(input: CreateEvidenceSourceInput): EvidenceSource;
   listEvidence(knowledgeObjectId: string): EvidenceSource[];
+  listEvidenceLinks(knowledgeObjectId: string): KnowledgeEvidenceLink[];
 }
 export interface RelationshipRepository {
   createRelationship(input: CreateRelationshipInput): Relationship;
@@ -84,6 +91,7 @@ export interface VaultRepository extends ProjectRepository, FolderRepository, Do
   seedDevelopmentFixtures(): { seeded: boolean; snapshot: VaultSnapshot };
   resetDevelopmentVault(): VaultSnapshot;
   reconcileFilesystem(): ReconciliationReport;
+  analyzeIntegrity(projectId: string): IntegrityReport;
 }
 
 export class VaultService {
@@ -126,8 +134,13 @@ export class VaultService {
     list: (filters: KnowledgeFilters) => this.repository.listKnowledgeObjects({ ...filters, projectId: assertIdentifier(filters.projectId, "projectId") }),
     create: (input: CreateKnowledgeObjectInput) => this.repository.createKnowledgeObject({ ...input, projectId: assertIdentifier(input.projectId, "projectId"), parentFolderId: input.parentFolderId ? assertIdentifier(input.parentFolderId, "parentFolderId") : null, title: knowledgeText(input.title, "title", 160), body: knowledgeText(input.body, "body", 20000) }),
     update: (id: string, changes: UpdateKnowledgeObjectInput) => this.repository.updateKnowledgeObject(assertIdentifier(id), { ...changes, ...(changes.parentFolderId !== undefined ? { parentFolderId: changes.parentFolderId ? assertIdentifier(changes.parentFolderId,"parentFolderId") : null } : {}), ...(changes.title !== undefined ? { title: knowledgeText(changes.title, "title", 160) } : {}), ...(changes.body !== undefined ? { body: knowledgeText(changes.body, "body", 20000) } : {}) }),
-    approve: (id: string) => { const knowledgeId=assertIdentifier(id); if(this.repository.listEvidence(knowledgeId).length===0)throw new VaultDomainError("VALIDATION_ERROR","Attach at least one evidence source before approval.","evidence"); return this.repository.setKnowledgeStatus(knowledgeId, "approved"); },
+    approve: (id: string) => this.repository.setKnowledgeStatus(assertIdentifier(id), "approved"),
     archive: (id: string) => this.repository.setKnowledgeStatus(assertIdentifier(id), "archived"),
+    restore: (id: string, reason?: string | null) => this.repository.restoreKnowledgeObject(assertIdentifier(id), normalizeReason(reason)),
+    supersede: (input: SupersedeKnowledgeInput) => this.repository.supersedeKnowledgeObject({ ...input, projectId: assertIdentifier(input.projectId,"projectId"), knowledgeObjectId: assertIdentifier(input.knowledgeObjectId,"knowledgeObjectId"), ...(input.supersededById !== undefined ? { supersededById: input.supersededById ? assertIdentifier(input.supersededById,"supersededById") : null } : {}), reason: normalizeReason(input.reason) }),
+    previewMerge: (input: MergeKnowledgeInput) => this.repository.previewKnowledgeMerge(normalizeMergeInput(input)),
+    merge: (input: MergeKnowledgeInput) => this.repository.mergeKnowledgeObjects(normalizeMergeInput(input)),
+    history: (id: string) => this.repository.listKnowledgeHistory(assertIdentifier(id)),
     search: (input: KnowledgeSearchInput) => { const query=input.query.trim(); return query ? this.repository.searchKnowledge({ ...input, query, limit: clampLimit(input.limit) }) : []; },
   };
   evidence = {
@@ -139,6 +152,9 @@ export class VaultService {
     create: (input: CreateRelationshipInput) => this.repository.createRelationship({ ...input, projectId: assertIdentifier(input.projectId,"projectId"), sourceId: assertIdentifier(input.sourceId,"sourceId"), targetId: assertIdentifier(input.targetId,"targetId") }),
     remove: (id: string) => this.repository.removeRelationship(assertIdentifier(id)),
   };
+  integrity = {
+    analyze: (projectId: string) => this.repository.analyzeIntegrity(assertIdentifier(projectId, "projectId")),
+  };
   filesystem = { reconcile: () => this.repository.reconcileFilesystem() };
   search(input: SearchInput) {
     const query = input.query.trim(); if (!query) return [];
@@ -149,3 +165,139 @@ export class VaultService {
 
 const clampLimit = (limit?: number) => Math.min(100, Math.max(1, limit ?? 30));
 const knowledgeText = (value: string, field: string, maximum: number) => { const text=String(value).trim(); if (!text) throw new VaultDomainError("VALIDATION_ERROR", `Knowledge ${field} is required.`, field); if (text.length>maximum) throw new VaultDomainError("VALIDATION_ERROR", `Knowledge ${field} is too long.`, field); return text; };
+const normalizeReason = (value: string | null | undefined) => { const reason = value == null ? "" : String(value).trim(); if (reason.length > 500) throw new VaultDomainError("VALIDATION_ERROR", "Reason must be 500 characters or fewer.", "reason"); return reason || null; };
+const normalizeMergeInput = (input: MergeKnowledgeInput): MergeKnowledgeInput => ({...input,projectId:assertIdentifier(input.projectId,"projectId"),targetId:assertIdentifier(input.targetId,"targetId"),sourceIds:input.sourceIds.map((id,index)=>assertIdentifier(id,`sourceIds[${index}]`)),reason:normalizeReason(input.reason)});
+
+// --- Deterministic knowledge integrity analyzer (Phase 2.4 Slice 2) ---
+
+export const INTEGRITY_RULE_VERSION = "1";
+
+const INTEGRITY_KIND_ORDER: IntegrityFindingKind[] = ["broken_reference", "missing_evidence", "orphaned", "duplicate_candidate", "unanswered_question"];
+const INTEGRITY_SEVERITY_ORDER: IntegritySeverity[] = ["error", "warning"];
+const INTEGRITY_ACTIVE = new Set<KnowledgeObject["status"]>(["draft", "approved"]);
+
+type IntegrityEndpointState = "ok" | "missing" | "cross_project" | "archived" | "trashed";
+const describeEndpointState = (state: IntegrityEndpointState) => (state === "cross_project" ? "cross-project" : state);
+const normalizeIntegrityTitle = (title: string) =>
+  title.normalize("NFC").toLowerCase().trim().replace(/\s+/g, " ").replace(/[.,;:!?]+$/g, "");
+const integrityFindingId = (projectId: string, kind: IntegrityFindingKind, subjectId: string, relatedIds: string[]) =>
+  `${projectId}::${INTEGRITY_RULE_VERSION}::${kind}::${subjectId}::${[...relatedIds].sort().join(",")}`;
+
+export function analyzeKnowledgeIntegrity(input: IntegrityAnalyzerInput): IntegrityReport {
+  const { projectId } = input;
+  const findings: IntegrityFinding[] = [];
+
+  const byId = new Map<string, { projectId: string; status: string }>();
+  const index = (id: string, ownerProjectId: string, status: string) => byId.set(id, { projectId: ownerProjectId, status });
+  for (const p of input.projects) index(p.id, p.id, p.status);
+  for (const f of input.folders) index(f.id, f.projectId, f.status);
+  for (const d of input.documents) index(d.id, d.projectId, d.status);
+  for (const k of input.knowledgeObjects) index(k.id, k.projectId, k.status);
+  for (const e of input.evidenceSources) index(e.id, e.projectId, "active");
+
+  const resolve = (id: string): IntegrityEndpointState => {
+    const entity = byId.get(id);
+    if (!entity) return "missing";
+    if (entity.projectId !== projectId) return "cross_project";
+    if (entity.status === "archived") return "archived";
+    if (entity.status === "trashed") return "trashed";
+    return "ok";
+  };
+  const severityFor = (state: IntegrityEndpointState): IntegritySeverity => (state === "archived" || state === "trashed" ? "warning" : "error");
+
+  const knowledge = input.knowledgeObjects.filter(k => k.projectId === projectId);
+  const knowledgeIds = new Set(knowledge.map(k => k.id));
+  const relationships = input.relationships.filter(r => r.projectId === projectId);
+  const evidenceLinks = input.evidenceLinks.filter(l => knowledgeIds.has(l.knowledgeObjectId));
+  const evidenceSources = input.evidenceSources.filter(e => e.projectId === projectId);
+
+  const evidenceCount = new Map<string, number>();
+  for (const l of evidenceLinks) evidenceCount.set(l.knowledgeObjectId, (evidenceCount.get(l.knowledgeObjectId) ?? 0) + 1);
+  const relatedKnowledge = new Set<string>();
+  for (const r of relationships) {
+    if (r.sourceType === "knowledge") relatedKnowledge.add(r.sourceId);
+    if (r.targetType === "knowledge") relatedKnowledge.add(r.targetId);
+  }
+
+  const add = (kind: IntegrityFindingKind, severity: IntegritySeverity, subjectId: string, relatedIds: string[], message: string) =>
+    findings.push({ id: integrityFindingId(projectId, kind, subjectId, relatedIds), kind, severity, subjectId, relatedIds, message });
+
+  for (const r of relationships) {
+    for (const [type, id] of [[r.sourceType, r.sourceId], [r.targetType, r.targetId]] as const) {
+      const state = resolve(id);
+      if (state === "ok") continue;
+      add("broken_reference", severityFor(state), r.id, [id], `Relationship ${r.relationshipType} references a ${describeEndpointState(state)} ${type} (${id}).`);
+    }
+  }
+  for (const l of evidenceLinks) {
+    const state = resolve(l.evidenceSourceId);
+    if (state === "ok") continue;
+    add("broken_reference", severityFor(state), l.knowledgeObjectId, [l.evidenceSourceId], `Evidence link references a ${describeEndpointState(state)} evidence source (${l.evidenceSourceId}).`);
+  }
+  for (const e of evidenceSources) {
+    if (!e.sourceId) continue;
+    const state = resolve(e.sourceId);
+    if (state === "ok") continue;
+    add("broken_reference", severityFor(state), e.id, [e.sourceId], `Evidence source references a ${describeEndpointState(state)} ${e.sourceType} (${e.sourceId}).`);
+  }
+
+  for (const k of knowledge) {
+    if (k.status === "approved" && (evidenceCount.get(k.id) ?? 0) === 0) {
+      add("missing_evidence", "error", k.id, [], `Approved knowledge "${k.title}" has no attached evidence.`);
+    }
+  }
+
+  for (const k of knowledge) {
+    if (!INTEGRITY_ACTIVE.has(k.status)) continue;
+    if ((evidenceCount.get(k.id) ?? 0) === 0 && !relatedKnowledge.has(k.id)) {
+      add("orphaned", "warning", k.id, [], `Knowledge "${k.title}" has no evidence and no relationships.`);
+    }
+  }
+
+  const active = knowledge.filter(k => INTEGRITY_ACTIVE.has(k.status));
+  const pairs = new Set<string>();
+  const emitPair = (a: KnowledgeObject, b: KnowledgeObject) => {
+    if (a.id === b.id || a.type !== b.type) return;
+    const [lo, hi] = a.id < b.id ? [a.id, b.id] : [b.id, a.id];
+    const key = `${lo}|${hi}`;
+    if (pairs.has(key)) return;
+    pairs.add(key);
+    add("duplicate_candidate", "warning", lo, [hi], `Possible duplicate: "${a.title}" and "${b.title}" (${a.type}).`);
+  };
+  const byTitle = new Map<string, KnowledgeObject[]>();
+  for (const k of active) {
+    const key = `${k.type}::${normalizeIntegrityTitle(k.title)}`;
+    const group = byTitle.get(key); if (group) group.push(k); else byTitle.set(key, [k]);
+  }
+  for (const group of byTitle.values()) for (let i = 0; i < group.length; i++) for (let j = i + 1; j < group.length; j++) emitPair(group[i]!, group[j]!);
+  const activeById = new Map(active.map(k => [k.id, k]));
+  for (const r of relationships) {
+    if (r.relationshipType !== "duplicates" || r.sourceType !== "knowledge" || r.targetType !== "knowledge") continue;
+    const a = activeById.get(r.sourceId), b = activeById.get(r.targetId);
+    if (a && b) emitPair(a, b);
+  }
+
+  const answered = new Set<string>();
+  for (const r of relationships) {
+    if (r.relationshipType !== "answers" || r.targetType !== "knowledge") continue;
+    const sourceState = resolve(r.sourceId);
+    if (sourceState !== "missing" && sourceState !== "cross_project") answered.add(r.targetId);
+  }
+  for (const k of knowledge) {
+    if (k.type === "question" && INTEGRITY_ACTIVE.has(k.status) && !answered.has(k.id)) {
+      add("unanswered_question", "warning", k.id, [], `Question "${k.title}" has no answer.`);
+    }
+  }
+
+  findings.sort((a, b) =>
+    INTEGRITY_SEVERITY_ORDER.indexOf(a.severity) - INTEGRITY_SEVERITY_ORDER.indexOf(b.severity)
+    || INTEGRITY_KIND_ORDER.indexOf(a.kind) - INTEGRITY_KIND_ORDER.indexOf(b.kind)
+    || a.subjectId.localeCompare(b.subjectId)
+    || a.relatedIds.join(",").localeCompare(b.relatedIds.join(","))
+    || a.id.localeCompare(b.id));
+
+  const countsByKind = Object.fromEntries(INTEGRITY_KIND_ORDER.map(k => [k, 0])) as Record<IntegrityFindingKind, number>;
+  for (const f of findings) countsByKind[f.kind]++;
+  const errorCount = findings.filter(f => f.severity === "error").length;
+  return { projectId, findings, totalCount: findings.length, errorCount, warningCount: findings.length - errorCount, countsByKind };
+}

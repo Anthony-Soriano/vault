@@ -3,5 +3,10 @@
   "version": "0.1.3",
   "private": true,
   "type": "module",
-  "main": "dist/electron/main/main.js"
+  "main": "dist/electron/main/main.js",
+  "dependencies": {
+    "@orbit/vault-core": "workspace:*",
+    "@orbit/vault-storage": "workspace:*",
+    "@orbit/vault-types": "workspace:*"
+  }
 }

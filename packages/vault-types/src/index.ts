@@ -4,6 +4,8 @@ export type KnowledgeType = "fact" | "decision" | "goal" | "question" | "idea" |
 export type KnowledgeStatus = "draft" | "approved" | "superseded" | "archived";
 export type KnowledgeConfidence = "low" | "medium" | "high" | "verified";
 export type KnowledgeAuthor = "user" | "ai";
+export type KnowledgeActorType = "user" | "system" | "ai";
+export type KnowledgeHistoryEvent = "created" | "edited" | "approved" | "archived" | "restored" | "superseded" | "merged" | "baseline_migrated";
 export type EvidenceSourceType = "document" | "file" | "url" | "conversation" | "image" | "pdf" | "manual_note";
 export type RelationshipEndpointType = "project" | "folder" | "document" | "knowledge";
 export type RelationshipType = "supports" | "references" | "contradicts" | "answers" | "depends_on" | "blocks" | "implements" | "duplicates" | "derived_from" | "belongs_to";
@@ -55,6 +57,7 @@ export interface KnowledgeObject {
   status: KnowledgeStatus;
   confidence: KnowledgeConfidence;
   author: KnowledgeAuthor;
+  supersededById: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -62,7 +65,6 @@ export interface KnowledgeObject {
 export interface EvidenceSource {
   id: string;
   projectId: string;
-  knowledgeObjectId: string;
   sourceType: EvidenceSourceType;
   sourceId: string | null;
   sourcePath: string | null;
@@ -85,6 +87,66 @@ export interface Relationship {
   createdAt: string;
 }
 
+export interface KnowledgeEvidenceLink {
+  id: string;
+  knowledgeObjectId: string;
+  evidenceSourceId: string;
+  originalKnowledgeObjectId: string;
+  operationId: string;
+  createdAt: string;
+}
+
+export interface KnowledgeAggregateSnapshot {
+  schemaVersion: 1;
+  object: KnowledgeObject;
+  evidenceLinks: KnowledgeEvidenceLink[];
+  incomingRelationships: Relationship[];
+  outgoingRelationships: Relationship[];
+}
+
+export interface KnowledgeHistoryRecord {
+  id: string;
+  knowledgeObjectId: string;
+  operationId: string;
+  eventType: KnowledgeHistoryEvent;
+  beforeSnapshot: KnowledgeAggregateSnapshot | null;
+  afterSnapshot: KnowledgeAggregateSnapshot | null;
+  actorType: KnowledgeActorType;
+  actorId: string | null;
+  reason: string | null;
+  createdAt: string;
+}
+
+export type IntegrityFindingKind =
+  | "missing_evidence" | "orphaned" | "broken_reference" | "duplicate_candidate" | "unanswered_question";
+export type IntegritySeverity = "error" | "warning";
+export interface IntegrityFinding {
+  id: string;
+  kind: IntegrityFindingKind;
+  severity: IntegritySeverity;
+  subjectId: string;
+  relatedIds: string[];
+  message: string;
+}
+export interface IntegrityReport {
+  projectId: string;
+  findings: IntegrityFinding[];
+  totalCount: number;
+  errorCount: number;
+  warningCount: number;
+  countsByKind: Record<IntegrityFindingKind, number>;
+}
+export interface IntegrityAnalyzerInput {
+  projectId: string;
+  projects: Project[];
+  folders: Folder[];
+  documents: DocumentFile[];
+  knowledgeObjects: KnowledgeObject[];
+  evidenceSources: EvidenceSource[];
+  relationships: Relationship[];
+  evidenceLinks: KnowledgeEvidenceLink[];
+}
+
 export type CreateProjectInput = Pick<Project, "name"> & Partial<Pick<Project, "description" | "icon" | "color">>;
 export type UpdateProjectInput = Partial<Pick<Project, "name" | "description" | "icon" | "color">>;
 export type CreateFolderInput = { projectId: string; parentFolderId: string | null; name: string };
@@ -94,8 +156,13 @@ export type CreateKnowledgeObjectInput = Pick<KnowledgeObject, "projectId" | "ty
 export type UpdateKnowledgeObjectInput = Partial<Pick<KnowledgeObject, "parentFolderId" | "type" | "title" | "body" | "confidence">>;
 export type KnowledgeFilters = { projectId: string; status?: KnowledgeStatus; type?: KnowledgeType };
 export type KnowledgeSearchInput = { query: string; projectId?: string; status?: KnowledgeStatus; type?: KnowledgeType; limit?: number };
-export type CreateEvidenceSourceInput = Pick<EvidenceSource, "projectId" | "knowledgeObjectId" | "sourceType" | "sourceId" | "sourcePath" | "excerpt" | "locator" | "confidence">;
+export type CreateEvidenceSourceInput = Pick<EvidenceSource, "projectId" | "sourceType" | "sourceId" | "sourcePath" | "excerpt" | "locator" | "confidence"> & { knowledgeObjectId: string };
 export type CreateRelationshipInput = Pick<Relationship, "projectId" | "sourceType" | "sourceId" | "targetType" | "targetId" | "relationshipType">;
+export type SupersedeKnowledgeInput = { projectId: string; knowledgeObjectId: string; supersededById?: string | null; reason?: string | null };
+export type MergeKnowledgeInput = { projectId: string; targetId: string; sourceIds: string[]; reason?: string | null };
+export type MergeRelationshipConflict = { relationshipId: string; resolution: "self_link_removed" | "duplicate_collapsed"; retainedRelationshipId: string | null };
+export type MergeKnowledgePreview = { target: KnowledgeObject; sources: KnowledgeObject[]; evidenceLinks: KnowledgeEvidenceLink[]; redirectedRelationships: Relationship[]; conflicts: MergeRelationshipConflict[]; blockingErrors: string[] };
+export type MergeKnowledgeResult = { operationId: string; target: KnowledgeObject; supersededSources: KnowledgeObject[]; transferredEvidenceCount: number; redirectedRelationshipCount: number; conflicts: MergeRelationshipConflict[] };
 export type RelationshipFilters = { projectId: string; entityType?: RelationshipEndpointType; entityId?: string };
 export type ProjectFilters = { status?: EntityStatus };
 export type SearchInput = { query: string; projectId?: string; limit?: number };
@@ -194,6 +261,11 @@ export interface VaultRendererApi {
     update(id: string, changes: UpdateKnowledgeObjectInput): Promise<ApiResult<KnowledgeObject>>;
     approve(id: string): Promise<ApiResult<KnowledgeObject>>;
     archive(id: string): Promise<ApiResult<KnowledgeObject>>;
+    restore(id: string, reason?: string | null): Promise<ApiResult<KnowledgeObject>>;
+    supersede(input: SupersedeKnowledgeInput): Promise<ApiResult<KnowledgeObject>>;
+    previewMerge(input: MergeKnowledgeInput): Promise<ApiResult<MergeKnowledgePreview>>;
+    merge(input: MergeKnowledgeInput): Promise<ApiResult<MergeKnowledgeResult>>;
+    history(knowledgeObjectId: string): Promise<ApiResult<KnowledgeHistoryRecord[]>>;
     search(input: KnowledgeSearchInput): Promise<ApiResult<KnowledgeObject[]>>;
   };
   evidence: {
@@ -205,6 +277,7 @@ export interface VaultRendererApi {
     create(input: CreateRelationshipInput): Promise<ApiResult<Relationship>>;
     remove(id: string): Promise<ApiResult<{ id: string }>>;
   };
+  integrity: { analyze(projectId: string): Promise<ApiResult<IntegrityReport>> };
   search: { query(input: SearchInput): Promise<ApiResult<SearchResult[]>> };
   development: {
     seed(): Promise<ApiResult<{ seeded: boolean; snapshot: VaultSnapshot }>>;

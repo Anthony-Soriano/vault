@@ -8,6 +8,15 @@ importers:
 
   .:
     devDependencies:
+      '@orbit/vault-core':
+        specifier: workspace:*
+        version: link:packages/vault-core
+      '@orbit/vault-storage':
+        specifier: workspace:*
+        version: link:packages/vault-storage
+      '@orbit/vault-types':
+        specifier: workspace:*
+        version: link:packages/vault-types
       '@types/node':
         specifier: ^22.19.19
         version: 22.19.19
@@ -26,11 +35,24 @@ importers:
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
+      vite:
+        specifier: ^8.0.13
+        version: 8.2.0(@types/node@22.19.19)(jiti@2.7.0)
       wait-on:
         specifier: ^9.0.3
         version: 9.1.0
 
-  apps/vault-desktop: {}
+  apps/vault-desktop:
+    dependencies:
+      '@orbit/vault-core':
+        specifier: workspace:*
+        version: link:../../packages/vault-core
+      '@orbit/vault-storage':
+        specifier: workspace:*
+        version: link:../../packages/vault-storage
+      '@orbit/vault-types':
+        specifier: workspace:*
+        version: link:../../packages/vault-types
 
   apps/vault-desktop/renderer:
     dependencies:

@@ -27,12 +27,16 @@
     ,"test": "node --experimental-strip-types --test tests/*.test.ts"
   },
   "devDependencies": {
+    "@orbit/vault-core": "workspace:*",
+    "@orbit/vault-storage": "workspace:*",
+    "@orbit/vault-types": "workspace:*",
     "@types/node": "^22.19.19",
     "concurrently": "^9.2.1",
     "cross-env": "^10.1.0",
     "electron": "^39.2.7",
     "electron-builder": "^26.0.12",
     "typescript": "^5.9.3",
+    "vite": "^8.0.13",
     "wait-on": "^9.0.3"
   }
 }

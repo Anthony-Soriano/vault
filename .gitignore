@@ -86,6 +86,8 @@ Desktop.ini
 .cache/
 outputs/
 work/
+.worktrees/
+.superpowers/
 
 # Legacy web/Sites prototype material (not part of the Electron + pnpm workspace)
 .openai/
