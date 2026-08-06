@@ -18,7 +18,13 @@ No export, save-dialog, or download path exists anywhere. Add export of a projec
 
 ## From Phase 1.3 (robustness & release)
 
-### BL-03 — Recovery / backup tooling · P1
+### BL-03 — Recovery / backup tooling · P1 — ✅ DONE (2026-08-06)
+> **Completed 2026-08-06** (owner manual acceptance passed; automated gate green). Implemented as manual snapshot & restore — see [`.orbit/ARCHITECTURE.md`](ARCHITECTURE.md) (Backup & recovery), [`.orbit/DECISIONS.md`](DECISIONS.md) (BL-03 decisions), design [`docs/superpowers/specs/2026-08-06-bl-03-recovery-backup-design.md`](../docs/superpowers/specs/2026-08-06-bl-03-recovery-backup-design.md), and execution plan [`docs/superpowers/plans/2026-08-06-bl-03-recovery-backup-execution.md`](../docs/superpowers/plans/2026-08-06-bl-03-recovery-backup-execution.md).
+>
+> **Promoted out of the backlog by owner approval on 2026-08-06.** Scope was refined during brainstorm: **manual** snapshots only (automatic pre-operation snapshots deferred to Phase 3 hooks); consistency handled by a `VACUUM INTO` database capture **plus** managed-file copy under one exclusive write barrier **and before/after fingerprint abort** for external changes (not raw WAL-file copying); persisted location-independent Vault UUID + restore lineage; restore into a **new Vault** only (in-place restore deferred); integrity failure **refuses** restore (salvage deferred). Original entry preserved below for history.
+>
+> **Deferred (still not in scope):** automatic/pre-operation snapshots, restore-in-place, corrupted-snapshot salvage/"restore anyway", ZIP/portable export, retention automation, cloud/sync.
+
 Only a `backups/` directory is created (`vault-storage/src/index.ts:182`); there is no backup-writing, snapshot, or restore logic. Add: periodic/triggered `vault.db` snapshots into `backups/`, and a restore path. Coordinate with SQLite WAL checkpointing so snapshots are consistent.
 - Status at audit: **Missing (scaffold only)**.
 

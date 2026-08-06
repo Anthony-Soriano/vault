@@ -1,9 +1,9 @@
 import { DatabaseSync } from "node:sqlite";
-import { randomUUID } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import type { CreateEvidenceSourceInput, CreateFolderInput, CreateKnowledgeObjectInput, CreateMarkdownInput, CreateProjectInput, CreateRelationshipInput, DocumentFile, EntityStatus, EvidenceSource, Folder, ImportFilesInput, KnowledgeAggregateSnapshot, KnowledgeConfidence, KnowledgeEvidenceLink, KnowledgeFilters, KnowledgeHistoryEvent, KnowledgeHistoryRecord, KnowledgeObject, KnowledgeSearchInput, KnowledgeStatus, MergeKnowledgeInput, MergeKnowledgePreview, MergeKnowledgeResult, MergeRelationshipConflict, Project, ProjectFilters, ReconciliationReport, Relationship, RelationshipEndpointType, RelationshipFilters, RelationshipType, SearchInput, SearchResult, SupersedeKnowledgeInput, UpdateKnowledgeObjectInput, UpdateProjectInput, VaultSnapshot } from "@orbit/vault-types";
-import { VaultDomainError, analyzeKnowledgeIntegrity, type VaultRepository } from "@orbit/vault-core";
+import type { CreateEvidenceSourceInput, CreateFolderInput, CreateKnowledgeObjectInput, CreateMarkdownInput, CreateProjectInput, CreateRelationshipInput, CreateSnapshotOptions, DocumentFile, EntityStatus, EvidenceSource, Folder, ImportFilesInput, KnowledgeAggregateSnapshot, KnowledgeConfidence, KnowledgeEvidenceLink, KnowledgeFilters, KnowledgeHistoryEvent, KnowledgeHistoryRecord, KnowledgeObject, KnowledgeSearchInput, KnowledgeStatus, MergeKnowledgeInput, MergeKnowledgePreview, MergeKnowledgeResult, MergeRelationshipConflict, Project, ProjectFilters, ReconciliationReport, Relationship, RelationshipEndpointType, RelationshipFilters, RelationshipType, RestoreResult, RestoreSnapshotInput, SearchInput, SearchResult, SnapshotInspection, SnapshotManifest, SnapshotSummary, SupersedeKnowledgeInput, UpdateKnowledgeObjectInput, UpdateProjectInput, VaultSnapshot } from "@orbit/vault-types";
+import { VaultDomainError, analyzeKnowledgeIntegrity, assertIdentifier, type VaultRepository } from "@orbit/vault-core";
 
 type StorageOptions = { vaultRoot: string; developmentMode: boolean; developmentRoot: string };
 type DbRow = Record<string, string | null>;
@@ -12,6 +12,63 @@ type MergePlan = MergeKnowledgePreview & {
   evidenceActions: {link:KnowledgeEvidenceLink;action:"transfer"|"delete"}[];
   relationshipActions: {relationship:Relationship;action:"redirect"|"delete"}[];
 };
+
+// --- BL-03 backup helpers (exported for tests; kept in-file because module:NodeNext
+// and node --experimental-strip-types disagree on relative .ts import specifiers) ---
+const toPosix = (p: string) => p.split(sep).join("/");
+function* walkFiles(rootDir: string): Generator<string> {
+  for (const entry of readdirSync(rootDir, { withFileTypes: true })) {
+    const abs = join(rootDir, entry.name);
+    if (entry.isDirectory()) yield* walkFiles(abs);
+    else if (entry.isFile()) yield abs;
+  }
+}
+const sortEntries = (record: Record<string, string>) => Object.fromEntries(Object.entries(record).sort(([a], [b]) => a.localeCompare(b)));
+export function hashFile(absPath: string): string { return "sha256:" + createHash("sha256").update(readFileSync(absPath)).digest("hex"); }
+export function hashTree(rootDir: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const abs of walkFiles(rootDir)) out[toPosix(relative(rootDir, abs))] = hashFile(abs);
+  return sortEntries(out);
+}
+export function fingerprintTree(rootDir: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const abs of walkFiles(rootDir)) { const s = statSync(abs); out[toPosix(relative(rootDir, abs))] = `${s.size}:${s.mtimeMs}`; }
+  return sortEntries(out);
+}
+export function treesEqual(a: Record<string, string>, b: Record<string, string>): boolean {
+  const ak = Object.keys(a), bk = Object.keys(b);
+  return ak.length === bk.length && ak.every((k) => a[k] === b[k]);
+}
+export function sqliteLiteralPath(absPath: string): string { return absPath.split("\\").join("/").split("'").join("''"); }
+export function directorySizeBytes(rootDir: string): number { let total = 0; for (const abs of walkFiles(rootDir)) total += statSync(abs).size; return total; }
+export function isSafeRelPosixPath(p: string): boolean {
+  if (typeof p !== "string" || p.length === 0) return false;
+  if (p.includes("\\") || p.startsWith("/") || /^[A-Za-z]:/.test(p)) return false;
+  return !p.split("/").some((s) => s === "" || s === "." || s === "..");
+}
+const isoTimestamp = (value: unknown): boolean => typeof value === "string" && value.length > 0 && !Number.isNaN(Date.parse(value));
+const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const isInt = (v: unknown, min: number): boolean => typeof v === "number" && Number.isInteger(v) && v >= min;
+// Structural validation of a parsed manifest ([] = valid). Detects corruption/accidental
+// modification, NOT forgery — BL-03 adds no cryptographic authenticity.
+export function validateManifestShape(manifest: unknown): string[] {
+  const problems: string[] = [];
+  if (typeof manifest !== "object" || manifest === null) return ["manifest is not an object"];
+  const m = manifest as Record<string, unknown>;
+  if (m.snapshotVersion !== 1) problems.push("unsupported snapshotVersion (expected 1)");
+  if (typeof m.vaultVersion !== "string" || m.vaultVersion.length === 0) problems.push("vaultVersion must be a non-empty string");
+  if (!isoTimestamp(m.createdAt)) problems.push("createdAt must be a valid ISO timestamp");
+  if (typeof m.vaultId !== "string" || !uuidRe.test(m.vaultId)) problems.push("vaultId must be a UUID");
+  if (!isInt(m.schemaVersion, 1)) problems.push("schemaVersion must be an integer >= 1");
+  if (!isInt(m.projectCount, 0)) problems.push("projectCount must be an integer >= 0");
+  if (typeof m.checksums !== "object" || m.checksums === null) { problems.push("checksums must be an object"); }
+  else for (const [key, value] of Object.entries(m.checksums as Record<string, unknown>)) {
+    if (!isSafeRelPosixPath(key)) problems.push(`unsafe checksum path: ${key}`);
+    else if (key !== "vault.db" && !key.startsWith("projects/")) problems.push(`unexpected checksum target: ${key}`);
+    if (typeof value !== "string" || !value.startsWith("sha256:")) problems.push(`invalid checksum value for ${key}`);
+  }
+  return problems;
+}
 
 const safeLinkedKind=(path:string,allowedRoot:string):"directory"|"file"|null=>{try{const resolved=realpathSync.native(path),within=relative(realpathSync.native(allowedRoot),resolved);if(within.startsWith(`..${sep}`)||within===".."||isAbsolute(within))return null;const stats=statSync(path);return stats.isDirectory()?"directory":stats.isFile()?"file":null;}catch{return null;}};
 
@@ -104,6 +161,13 @@ const MIGRATIONS: Migration[] = [{
 }, {
   version: 6,
   run: migrateEvidenceLinks,
+}, {
+  version: 7,
+  run: (db) => {
+    db.exec("CREATE TABLE IF NOT EXISTS vault_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);");
+    const existing = db.prepare("SELECT value FROM vault_meta WHERE key='vault_id'").get() as { value: string } | undefined;
+    if (!existing) db.prepare("INSERT INTO vault_meta(key, value) VALUES ('vault_id', ?)").run(randomUUID());
+  },
 }];
 
 function migrateEvidenceLinks(db: DatabaseSync) {
@@ -192,6 +256,144 @@ export class SqliteVaultRepository implements VaultRepository {
   close() { this.database?.close(); this.database = null; }
   private get db() { if (!this.database) throw new Error("Vault database is not initialized"); return this.database; }
   private transaction<T>(operation: () => T): T { this.db.exec("BEGIN IMMEDIATE"); try { const value = operation(); this.db.exec("COMMIT"); return value; } catch (error) { this.db.exec("ROLLBACK"); throw error; } }
+
+  getVaultMeta(key: string) { const row = this.db.prepare("SELECT value FROM vault_meta WHERE key=?").get(key) as { value: string } | undefined; return row?.value ?? null; }
+  setVaultMeta(key: string, value: string) { this.db.prepare("INSERT INTO vault_meta(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(key, value); }
+  getVaultId() { const id = this.getVaultMeta("vault_id"); if (!id) throw new Error("Vault UUID missing"); return id; }
+
+  // --- BL-03 Recovery & Backup -------------------------------------------
+  private backupsRoot() { return join(this.options.vaultRoot, "backups"); }
+  private schemaVersion() { return (this.db.prepare("SELECT MAX(version) AS v FROM schema_migrations").get() as { v: number }).v; }
+
+  // internalHooks is a TEST-ONLY seam. It is NOT part of the VaultRepository interface,
+  // and the service/IPC/preload/renderer never pass it. Do not expose it.
+  createSnapshot(options: CreateSnapshotOptions, internalHooks?: { onAfterManagedCopy?: () => void }): SnapshotSummary {
+    const vaultRoot = this.options.vaultRoot;
+    const projectsDir = join(vaultRoot, "projects");
+    const backupsDir = this.backupsRoot();
+    mkdirSync(backupsDir, { recursive: true });
+    const id = randomUUID();
+    const staging = join(backupsDir, `.tmp-${id}`);
+    mkdirSync(join(staging, "projects"), { recursive: true });
+    try {
+      const before = fingerprintTree(projectsDir);
+      // VACUUM INTO folds the WAL into a clean single-file DB; must run outside a transaction.
+      this.db.exec(`VACUUM INTO '${sqliteLiteralPath(join(staging, "vault.db"))}'`);
+      cpSync(projectsDir, join(staging, "projects"), { recursive: true });
+      internalHooks?.onAfterManagedCopy?.();
+      const after = fingerprintTree(projectsDir);
+      if (!treesEqual(before, after)) throw new VaultDomainError("VALIDATION_ERROR", "The Vault changed during capture; snapshot aborted. Try again.");
+      const checksums: Record<string, string> = { "vault.db": hashFile(join(staging, "vault.db")) };
+      for (const [rel, sum] of Object.entries(hashTree(join(staging, "projects")))) checksums[`projects/${rel}`] = sum;
+      const createdAt = now();
+      const manifest: SnapshotManifest = {
+        snapshotVersion: 1,
+        vaultVersion: options.appVersion,
+        createdAt,
+        vaultId: this.getVaultId(),
+        schemaVersion: this.schemaVersion(),
+        projectCount: (this.db.prepare("SELECT COUNT(*) AS c FROM projects").get() as { c: number }).c,
+        checksums,
+      };
+      writeFileSync(join(staging, "manifest.json"), JSON.stringify(manifest, null, 2), "utf8");
+      const finalId = `${createdAt.replace(/[:.]/g, "-")}_${id}`;
+      const finalDir = join(backupsDir, finalId);
+      renameSync(staging, finalDir);
+      return { id: finalId, createdAt, sizeBytes: directorySizeBytes(finalDir), projectCount: manifest.projectCount, schemaVersion: manifest.schemaVersion, vaultVersion: manifest.vaultVersion };
+    } catch (error) {
+      rmSync(staging, { recursive: true, force: true });
+      throw error;
+    }
+  }
+
+  private snapshotDir(snapshotId: string) { return join(this.backupsRoot(), assertIdentifier(snapshotId)); }
+  private readManifest(snapshotId: string): SnapshotManifest {
+    const dir = this.snapshotDir(snapshotId);
+    if (!existsSync(join(dir, "manifest.json"))) throw notFound("Snapshot");
+    return JSON.parse(readFileSync(join(dir, "manifest.json"), "utf8")) as SnapshotManifest;
+  }
+
+  listSnapshots(): SnapshotSummary[] {
+    const backupsDir = this.backupsRoot();
+    if (!existsSync(backupsDir)) return [];
+    const out: SnapshotSummary[] = [];
+    for (const name of readdirSync(backupsDir)) {
+      if (name.startsWith(".tmp-") || name.includes(".restoring-")) continue;
+      const dir = join(backupsDir, name);
+      if (!existsSync(join(dir, "manifest.json"))) continue;
+      const m = JSON.parse(readFileSync(join(dir, "manifest.json"), "utf8")) as SnapshotManifest;
+      out.push({ id: name, createdAt: m.createdAt, sizeBytes: directorySizeBytes(dir), projectCount: m.projectCount, schemaVersion: m.schemaVersion, vaultVersion: m.vaultVersion });
+    }
+    return out.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  inspectSnapshot(snapshotId: string): SnapshotInspection {
+    const manifest = this.readManifest(snapshotId);
+    const dir = this.snapshotDir(snapshotId);
+    const problems = validateManifestShape(manifest);
+    // Exact bijection: files present under the snapshot (excluding manifest.json) must equal the checksum key set.
+    const expected = new Set(Object.keys(manifest.checksums));
+    const present = new Set<string>();
+    if (existsSync(join(dir, "vault.db"))) present.add("vault.db");
+    const projectsDir = join(dir, "projects");
+    if (existsSync(projectsDir)) for (const rel of Object.keys(hashTree(projectsDir))) present.add(`projects/${rel}`);
+    for (const key of expected) {
+      if (!present.has(key)) { problems.push(`missing file: ${key}`); continue; }
+      const abs = join(dir, key);
+      if (hashFile(abs) !== manifest.checksums[key]) problems.push(`checksum mismatch: ${key}`);
+    }
+    for (const key of present) if (!expected.has(key)) problems.push(`unexpected file: ${key}`);
+    return { manifest, integrityOk: problems.length === 0, problems };
+  }
+
+  deleteSnapshot(snapshotId: string): { id: string } {
+    this.readManifest(snapshotId); // validates id + existence
+    rmSync(this.snapshotDir(snapshotId), { recursive: true, force: true });
+    return { id: snapshotId };
+  }
+
+  backupsDiskUsage(): { totalBytes: number; count: number } {
+    const list = this.listSnapshots();
+    return { totalBytes: list.reduce((n, s) => n + s.sizeBytes, 0), count: list.length };
+  }
+
+  restoreSnapshotToNewVault(input: RestoreSnapshotInput): RestoreResult {
+    const snapshotId = assertIdentifier(input.snapshotId);
+    const parentPath = resolve(String(input.parentPath));
+    const folderName = String(input.folderName);
+    if (!existsSync(parentPath)) throw new VaultDomainError("VALIDATION_ERROR", "The chosen location does not exist.");
+    if (!isSafeRelPosixPath(folderName) || folderName.includes("/")) throw new VaultDomainError("VALIDATION_ERROR", "Enter a valid new folder name for the restored Vault.");
+    const target = join(parentPath, folderName);
+    if (existsSync(target)) throw new VaultDomainError("VALIDATION_ERROR", "That folder already exists. Choose a new, empty name for the restored Vault.");
+    // Validate BEFORE writing anything to disk.
+    const inspection = this.inspectSnapshot(snapshotId);
+    if (!inspection.integrityOk) throw new VaultDomainError("VALIDATION_ERROR", `Snapshot failed its integrity check: ${inspection.problems.join("; ")}`);
+    if (inspection.manifest.schemaVersion > Math.max(...MIGRATIONS.map(m => m.version))) throw new VaultDomainError("VALIDATION_ERROR", "This snapshot was written by a newer version of Orbit Vault and cannot be restored by this build.");
+    const snapshotDir = this.snapshotDir(snapshotId);
+    const staging = join(parentPath, `.orbit-restoring-${randomUUID()}`);
+    const newId = randomUUID();
+    try {
+      mkdirSync(join(staging, "projects"), { recursive: true });
+      copyFileSync(join(snapshotDir, "vault.db"), join(staging, "vault.db"));
+      cpSync(join(snapshotDir, "projects"), join(staging, "projects"), { recursive: true });
+      const staged = new DatabaseSync(join(staging, "vault.db"));
+      try {
+        const integrity = staged.prepare("PRAGMA integrity_check").get() as { integrity_check: string };
+        if (integrity.integrity_check !== "ok") throw new VaultDomainError("VALIDATION_ERROR", "The restored database failed SQLite's integrity check.");
+        if ((staged.prepare("PRAGMA foreign_key_check").all()).length > 0) throw new VaultDomainError("VALIDATION_ERROR", "The restored database failed a foreign-key check.");
+        const upsert = staged.prepare("INSERT INTO vault_meta(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value");
+        upsert.run("vault_id", newId);
+        upsert.run("restored_from_vault_id", inspection.manifest.vaultId);
+        upsert.run("restored_from_snapshot_id", snapshotId);
+        upsert.run("restored_at", now());
+      } finally { staged.close(); }
+      renameSync(staging, target); // atomic finalize; target did not exist -> works on Windows too
+      return { vaultId: newId, targetPath: target };
+    } catch (error) {
+      rmSync(staging, { recursive: true, force: true });
+      throw error;
+    }
+  }
 
   createProject(input: CreateProjectInput) {
     const name = this.uniqueProjectName(input.name), id = entityId(), timestamp = now(), storagePath=`${id}/files`;

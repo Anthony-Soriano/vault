@@ -3,6 +3,7 @@ import type {
   EvidenceSource, Folder, KnowledgeEvidenceLink, KnowledgeFilters, KnowledgeHistoryRecord, KnowledgeObject, KnowledgeSearchInput, KnowledgeStatus, MergeKnowledgeInput, MergeKnowledgePreview, MergeKnowledgeResult, Project, ProjectFilters, SupersedeKnowledgeInput,
   ReconciliationReport, Relationship, RelationshipFilters, SearchInput, SearchResult, UpdateKnowledgeObjectInput, UpdateProjectInput, VaultSnapshot,
   IntegrityAnalyzerInput, IntegrityFinding, IntegrityFindingKind, IntegrityReport, IntegritySeverity,
+  CreateSnapshotOptions, RestoreResult, RestoreSnapshotInput, SnapshotInspection, SnapshotSummary,
 } from "@orbit/vault-types";
 
 export class VaultDomainError extends Error {
@@ -92,6 +93,12 @@ export interface VaultRepository extends ProjectRepository, FolderRepository, Do
   resetDevelopmentVault(): VaultSnapshot;
   reconcileFilesystem(): ReconciliationReport;
   analyzeIntegrity(projectId: string): IntegrityReport;
+  createSnapshot(options: CreateSnapshotOptions): SnapshotSummary;
+  listSnapshots(): SnapshotSummary[];
+  inspectSnapshot(snapshotId: string): SnapshotInspection;
+  deleteSnapshot(snapshotId: string): { id: string };
+  restoreSnapshotToNewVault(input: RestoreSnapshotInput): RestoreResult;
+  backupsDiskUsage(): { totalBytes: number; count: number };
 }
 
 export class VaultService {
@@ -154,6 +161,14 @@ export class VaultService {
   };
   integrity = {
     analyze: (projectId: string) => this.repository.analyzeIntegrity(assertIdentifier(projectId, "projectId")),
+  };
+  backup = {
+    create: (options: CreateSnapshotOptions) => this.repository.createSnapshot(options),
+    list: () => this.repository.listSnapshots(),
+    inspect: (snapshotId: string) => this.repository.inspectSnapshot(assertIdentifier(snapshotId, "snapshotId")),
+    delete: (snapshotId: string) => this.repository.deleteSnapshot(assertIdentifier(snapshotId, "snapshotId")),
+    restoreToNewVault: (input: RestoreSnapshotInput) => this.repository.restoreSnapshotToNewVault({ snapshotId: assertIdentifier(input.snapshotId, "snapshotId"), parentPath: String(input.parentPath), folderName: String(input.folderName) }),
+    diskUsage: () => this.repository.backupsDiskUsage(),
   };
   filesystem = { reconcile: () => this.repository.reconcileFilesystem() };
   search(input: SearchInput) {

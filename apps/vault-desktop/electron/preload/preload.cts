@@ -51,6 +51,14 @@ const vaultApi: VaultRendererApi = {
     remove: (id) => call("vault:relationships:remove", id),
   },
   integrity: { analyze: (projectId) => call("vault:integrity:analyze", projectId) },
+  backup: {
+    create: () => call("vault:backup:create"),
+    list: () => call("vault:backup:list"),
+    inspect: (snapshotId) => call("vault:backup:inspect", snapshotId),
+    delete: (snapshotId) => call("vault:backup:delete", snapshotId),
+    restoreToNewVault: (input) => call("vault:backup:restore", input),
+    diskUsage: () => call("vault:backup:disk-usage"),
+  },
   search: { query: (input) => call("vault:search", input) },
   development: { seed: () => call("vault:development:seed"), reset: () => call("vault:development:reset") },
 };

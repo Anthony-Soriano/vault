@@ -28,9 +28,15 @@ Status reflects `main` / tag `v0.2.0`. "Planned" phases are not scope until writ
 - **Done when:** without AI, a user can create/approve/supersede/archive/merge knowledge with preserved history, attach/inspect evidence, link entities, search knowledge, and review deterministic integrity findings — all persistent. **Achieved at `v0.2.0`.**
 - **Exclusions:** any AI, semantic inference, persisted integrity findings, automatic repair/merge.
 
+### BL-03 — Recovery & Backup ✅ (pre-Phase-3 release-readiness item)
+- **Objective:** manual, integrity-checked point-in-time snapshots (database + managed files) restorable into a new Vault.
+- **Deliverables:** manual snapshot capture (`VACUUM INTO` + managed-file copy under a write barrier, external-change fingerprint abort); persisted location-independent Vault UUID + restore lineage; list/inspect/delete + disk usage; non-destructive restore-to-new-Vault with staging + atomic finalize; `vault:backup:*` IPC + Backups panel.
+- **Done when:** a user can snapshot, then restore into a new Vault whose logical state and managed files match the capture, without ever altering the live Vault. **Achieved 2026-08-06** (owner manual acceptance passed; gate green). Promoted from `.orbit/BACKLOG.md` (BL-03) by owner approval.
+- **Exclusions (still deferred):** automatic/pre-operation snapshots, restore-in-place, salvage/"restore anyway", ZIP export, retention automation, cloud/sync.
+
 ## Current phase
 
-**Between phases — Phase 2 baseline locked (`v0.2.0`); Phase 3 not yet planned.** No active implementation scope until `.orbit/CURRENT_PHASE.md` is populated with owner-approved Phase 3 scope. See `.orbit/CURRENT_PHASE.md`.
+**Between phases — Phase 2 baseline (`v0.2.0`) plus completed BL-03 recovery/backup; Phase 3 not yet planned.** No active implementation scope until `.orbit/CURRENT_PHASE.md` is populated with owner-approved Phase 3 scope. See `.orbit/CURRENT_PHASE.md`.
 
 ## Future phases
 

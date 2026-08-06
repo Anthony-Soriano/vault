@@ -213,6 +213,31 @@ export interface OrbitDesktopBridge {
   openFolder(): Promise<string | null>;
 }
 
+// --- BL-03 Recovery & Backup ---------------------------------------------
+// A snapshot's on-disk manifest. Describes the snapshot, not SQLite internals.
+export interface SnapshotManifest {
+  snapshotVersion: 1;
+  vaultVersion: string;
+  createdAt: string;              // ISO-8601
+  vaultId: string;               // source Vault UUID
+  schemaVersion: number;         // max applied migration version at capture
+  projectCount: number;
+  checksums: Record<string, string>; // relative POSIX path -> "sha256:<hex>"; includes "vault.db"
+}
+export interface SnapshotSummary {
+  id: string;                    // "<iso-dashed>_<uuid>" directory name
+  createdAt: string;
+  sizeBytes: number;
+  projectCount: number;
+  schemaVersion: number;
+  vaultVersion: string;
+}
+export interface SnapshotInspection { manifest: SnapshotManifest; integrityOk: boolean; problems: string[] }
+export interface CreateSnapshotOptions { appVersion: string }
+// Service/storage contract: caller supplies a parent directory + a new (non-existent) folder name.
+export interface RestoreSnapshotInput { snapshotId: string; parentPath: string; folderName: string }
+export interface RestoreResult { vaultId: string; targetPath: string }
+
 export interface VaultRendererApi {
   snapshot(): Promise<ApiResult<VaultSnapshot>>;
   onChanged(callback: () => void): () => void;
@@ -278,6 +303,14 @@ export interface VaultRendererApi {
     remove(id: string): Promise<ApiResult<{ id: string }>>;
   };
   integrity: { analyze(projectId: string): Promise<ApiResult<IntegrityReport>> };
+  backup: {
+    create(): Promise<ApiResult<SnapshotSummary>>;
+    list(): Promise<ApiResult<SnapshotSummary[]>>;
+    inspect(snapshotId: string): Promise<ApiResult<SnapshotInspection>>;
+    delete(snapshotId: string): Promise<ApiResult<{ id: string }>>;
+    restoreToNewVault(input: { snapshotId: string; folderName: string }): Promise<ApiResult<RestoreResult>>;
+    diskUsage(): Promise<ApiResult<{ totalBytes: number; count: number }>>;
+  };
   search: { query(input: SearchInput): Promise<ApiResult<SearchResult[]>> };
   development: {
     seed(): Promise<ApiResult<{ seeded: boolean; snapshot: VaultSnapshot }>>;

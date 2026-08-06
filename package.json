@@ -16,14 +16,14 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "pnpm desktop:dev",
-    "desktop:dev": "pnpm desktop:electron:build && concurrently -k -n renderer,desktop -c cyan,magenta \"pnpm --filter @orbit/vault-renderer dev\" \"wait-on http-get://127.0.0.1:5173 && cross-env ORBIT_RENDERER_URL=http://127.0.0.1:5173 electron apps/vault-desktop\"",
+    "dev": "corepack pnpm desktop:dev",
+    "desktop:dev": "corepack pnpm desktop:electron:build && concurrently -k -n renderer,desktop -c cyan,magenta \"corepack pnpm --filter @orbit/vault-renderer dev\" \"wait-on http-get://127.0.0.1:5173 && cross-env ORBIT_RENDERER_URL=http://127.0.0.1:5173 electron apps/vault-desktop\"",
     "desktop:electron:build": "vite build --config apps/vault-desktop/electron/vite.main.config.ts && vite build --config apps/vault-desktop/electron/vite.preload.config.ts",
-    "desktop:renderer:build": "pnpm --filter @orbit/vault-renderer build",
-    "build": "pnpm desktop:electron:build && pnpm desktop:renderer:build",
-    "package": "pnpm build && electron-builder --config electron-builder.yml",
-    "package:dir": "pnpm build && electron-builder --dir --config electron-builder.yml",
-    "typecheck": "tsc -p apps/vault-desktop/electron/tsconfig.json --noEmit && pnpm --filter @orbit/vault-renderer typecheck"
+    "desktop:renderer:build": "corepack pnpm --filter @orbit/vault-renderer build",
+    "build": "corepack pnpm desktop:electron:build && corepack pnpm desktop:renderer:build",
+    "package": "corepack pnpm build && electron-builder --config electron-builder.yml",
+    "package:dir": "corepack pnpm build && electron-builder --dir --config electron-builder.yml",
+    "typecheck": "tsc -p apps/vault-desktop/electron/tsconfig.json --noEmit && corepack pnpm --filter @orbit/vault-renderer typecheck"
     ,"test": "node --experimental-strip-types --test tests/*.test.ts"
   },
   "devDependencies": {
