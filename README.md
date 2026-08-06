@@ -2,7 +2,7 @@
 
 > A local-first **Project Truth Engine** that turns a project's files, notes, code, and decisions into a compact, editable, transparent, evidence-backed context layer for humans and AI — fully owned on your machine.
 
-**Status:** `v0.2.0` — Phase 2 complete (manual knowledge system: documents, knowledge objects, evidence, typed relationships, lifecycle, and deterministic integrity). No AI subsystem yet; Phase 3 (AI proposals) is the next milestone.
+**Status:** `v0.2.0` baseline + **BL-03 recovery/backup complete** — Phase 2 (manual knowledge system: documents, knowledge objects, evidence, typed relationships, lifecycle, and deterministic integrity) plus manual snapshot & restore. No AI subsystem yet; the project is between phases (Phase 3 AI proposals not yet planned).
 
 **Product rule:** Documents are source material. Knowledge objects are interpretations. Evidence connects the two. Users stay in control — AI may propose, never silently mutate.
 
@@ -34,7 +34,7 @@ Requires Node.js ≥ 22.13 and pnpm 11.9.0. Full details in [`docs/SETUP.md`](do
 pnpm install
 pnpm dev          # Electron + Vite hot reload (launches the app)
 pnpm typecheck    # tsc across electron + renderer
-pnpm test         # persistence, lifecycle, integrity, Atlas regression (49 tests)
+pnpm test         # persistence, lifecycle, integrity, Atlas, backup/restore (70 tests)
 pnpm build        # compile electron main + preload + renderer
 pnpm package      # Windows installer
 ```

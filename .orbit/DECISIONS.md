@@ -51,3 +51,23 @@ Merging duplicates retains a chosen target as canonical, marks the others `super
 
 ### History is an immutable audit timeline (Phase 2.4)
 Lifecycle events (create/edit/approve/archive/restore/supersede/merge) are recorded as immutable before/after snapshots. Version *restoration* is intentionally not offered yet. **Why:** an inspectable, tamper-evident record without complicating merge safety.
+
+## BL-03 recovery & backup
+
+### Snapshots are manual only (BL-03)
+A snapshot is created only by an explicit user action; there are no scheduled, timed, or automatic pre-operation snapshots. **Why:** BL-03 solves recovery, not automation. Automatic pre-operation snapshots belong to the Phase-3 AI-proposal safety net and are deferred.
+
+### A snapshot captures the whole Vault as one stable state (BL-03)
+A snapshot is a `VACUUM INTO` single-file `vault.db` (no WAL sidecars) plus a verbatim copy of the managed `projects/` tree, captured under a defensive write barrier and validated by before/after fingerprints that abort on any external change. **Why:** the database and managed files are separate stores; a snapshot must never contain a database that references file state it did not also capture.
+
+### Vault identity is a persisted, location-independent UUID (BL-03)
+Each Vault stores a UUID in `vault_meta` (migration 7), independent of its directory path. A restored Vault receives a **new** UUID and records lineage (`restored_from_vault_id`, `restored_from_snapshot_id`, `restored_at`). **Why:** identity must survive moves/renames, and a restore must never produce two live Vaults claiming the same identity.
+
+### Restore is non-destructive and refuses on any integrity failure (BL-03)
+Restore only ever creates a new Vault in a new, non-existent directory (staging → atomic finalize); it never replaces the live Vault. It validates structure, checksums, and supported schema version before writing, and refuses outright on any mismatch — there is no "restore anyway". **Why:** recovery must be safe by construction; salvage of a damaged snapshot and in-place restore are deferred, higher-risk capabilities.
+
+### Snapshot integrity is corruption-detection, not authenticity (BL-03)
+Manifest validation checks structure and an exact file↔checksum bijection (no missing, no unexpected files) with SHA-256. **Why:** this reliably detects corruption and accidental modification; BL-03 deliberately adds no cryptographic signatures or cloud trust, so it does not defend against deliberate forgery.
+
+### Snapshots are never auto-deleted (BL-03)
+Retention is fully manual: every snapshot is a deliberate user action and is kept until the user deletes it. **Why:** silently reaping a backup the user chose to create would violate their expectation; disk usage is surfaced instead.

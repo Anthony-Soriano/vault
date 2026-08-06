@@ -1,58 +1,56 @@
-This is the operational center. Do not implement work that is absent from this file (Rule 3, root `AGENTS.md`). Update it after completed work (Rule 9, root `AGENTS.md`).
+This is the operational center. Do not implement work that is absent from this file (Rule 3, root `AGENTS.md`). Update it after completed work (Rule 9); run the full closeout when completing a phase (Rule 11).
 
-**State: ACTIVE — BL-03 (Recovery & Backup), planning stage.** Phase 2 remains complete and locked at tag `v0.2.0`. Phase 3 (AI proposals) is still **not** planned. By owner approval (2026-08-06), backlog item **BL-03** has been promoted from `.orbit/BACKLOG.md` into the active phase as a standalone, pre-Phase-3 release-readiness item. Design is approved; the implementation plan is being written. **No implementation code may be written until the plan is complete and consistent with Project Truth.**
+**State: BETWEEN PHASES.** Phase 2 is complete and locked at tag `v0.2.0`. The pre-Phase-3 release-readiness item **BL-03 (Recovery & Backup) is complete** (owner manual acceptance passed 2026-08-06; automated gate green). There is **no active implementation scope**. Phase 3 (AI proposals) is still **not** planned and must not be started or planned without explicit owner approval.
 
 ## Current objective
 
-Deliver **manual point-in-time snapshot & restore** for a Vault: on-demand snapshots that capture the SQLite database and the managed project files as one consistent instant, are integrity-checked, and can be restored into a new Vault directory. Recovery, not automation.
-
-Design of record: [`docs/superpowers/specs/2026-08-06-bl-03-recovery-backup-design.md`](../docs/superpowers/specs/2026-08-06-bl-03-recovery-backup-design.md).
+None active. Awaiting an owner decision on the next item: either another P1 release-readiness item (BL-05 accessibility, BL-06 large-Vault stress, BL-08 installed-build regression) or the owner-approved Phase 3 (AI proposals) brainstorm → spec → plan. New ideas go to `.orbit/BACKLOG.md` (Rule 10).
 
 ## Approved scope
 
-- Manual **Create snapshot** (no scheduled/automatic triggers).
-- Snapshot = consistent `vault.db` (`VACUUM INTO`, no `-wal`/`-shm`) **+** verbatim copy of the managed `projects/` tree **+** `manifest.json` with SHA-256 checksums — captured under one **exclusive Vault write barrier**, preceded by an explicit **autosave/watcher flush**, and guarded by **before/after fingerprinting of `projects/`** that **aborts** the snapshot if an external program changed files mid-capture.
-- **Persisted, location-independent Vault UUID** (`vault_meta` table via a new migration — the one deliberate schema addition, required by the manifest). Restored Vaults get a **new** UUID plus recorded **lineage** (`restored_from_vault_id` / `restored_from_snapshot_id`), so a restore never duplicates identity.
-- **List / inspect / delete** snapshots; **total disk usage** readout. No auto-deletion (keep all until the user deletes).
-- **Restore into a new, empty/non-existent directory** only, via **staging + atomic finalization** (checksum + schema-version validated before any target write), so a failed restore never leaves a valid-looking target.
-- New `vault:backup:*` IPC behind the existing `handle(...)` pattern; `window.vault.backup` in preload; a **Backups** renderer panel. Renderer never touches fs/SQLite.
-- Tests per the design: round-trip **logical-state equivalence + managed-file hash equality** (not byte-identical DB), write-barrier consistency, **external-change abort**, **pre-barrier flush**, **Vault identity & lineage**, integrity refusal (before any target write), **no half-snapshot / no half-restore**, live-Vault safety, schema guard.
-
-## Explicit exclusions (stay narrowly scoped)
-
-- **Automatic pre-operation snapshots** (before merge/supersede/archive; later before AI proposals) — deferred to Phase 3 hook work.
-- **Restore-in-place / replace-current-Vault** — deferred.
-- **Corrupted-snapshot salvage / "restore anyway"** — restore refuses on any integrity failure; salvage is later work.
-- **Zip / portable export**, **retention automation**, and any **cloud/sync**.
-- No Phase 3, no other P1 backlog items (BL-05/06/08), no unrelated polish pulled into this phase.
+None. (Nothing is approved for implementation.)
 
 ## Active tasks
 
-1. **Write the implementation plan** (writing-plans skill) → `docs/superpowers/plans/2026-08-06-bl-03-recovery-backup.md`. Must resolve the two flagged sub-decisions: `vaultId` sourcing and the exact write-barrier mechanism.
-2. (Blocked on plan completion + owner sign-off) Implement test-first per the plan.
+None.
 
-No implementation task is authorized to start until task 1 is complete and approved.
+## Just completed — BL-03 Recovery & Backup
 
-## Acceptance tests
+Manual, integrity-checked snapshot & restore. Implemented and verified:
+- Manual **Create snapshot** = `VACUUM INTO` single-file `vault.db` (no WAL sidecars) + verbatim `projects/` copy, staged then atomically renamed, under a defensive write barrier, with **before/after fingerprint abort** on external change.
+- Persisted **location-independent Vault UUID** (`vault_meta`, migration 7); restored Vaults get a **new** UUID + lineage.
+- **List / inspect / delete** + total disk usage; **no auto-deletion**.
+- **Restore into a new, non-existent directory only**, via staging → `PRAGMA integrity_check`/`foreign_key_check` → atomic finalize; validates structure/checksums/schema before writing; **refuses on any integrity failure**; never touches the live Vault.
+- `vault:backup:*` IPC + `window.vault.backup` + a **Backups** renderer panel.
 
-Feature acceptance is defined in the design's *Acceptance criteria* and *Testing* sections. Standing verification gate for completion: `pnpm typecheck`, `pnpm test` (incl. new `tests/backup.test.ts`), `pnpm build`, and `node scripts/phase2-lifecycle-ui-regression.mjs` — all green.
+Design: `docs/superpowers/specs/2026-08-06-bl-03-recovery-backup-design.md`. Execution plan: `docs/superpowers/plans/2026-08-06-bl-03-recovery-backup-execution.md`.
 
-## Risks
+## Verification (Rule 11)
 
-- **Cross-store consistency** is the core technical risk: the database and managed files are separate stores. Mitigated by the exclusive write barrier (for accepted writes) **plus** before/after fingerprint abort (for external writes the barrier cannot stop); both must be proven by test.
-- **`VACUUM INTO` output is not byte-identical** to the source DB — acceptance is deliberately defined as logical + file-hash equivalence to avoid a false failure signal.
-- Remaining P1 release gaps stay deferred (BL-05 accessibility, BL-06 large-Vault stress, BL-08 installed-build regression) and are **not** in this phase.
-- Phase 3 remains the primary future product risk (first non-user writer); unchanged and out of scope here.
+**Automated gate — all green** (re-run after the closeout documentation changes):
+- `corepack pnpm typecheck` → electron 0, renderer 0
+- `corepack pnpm test` → **70/70** (49 baseline + 21 BL-03 `tests/backup.test.ts`)
+- `corepack pnpm build` → electron + renderer built
+- `node scripts/phase2-lifecycle-ui-regression.mjs` → passed (now asserts the `vault:backup:*` contract)
+
+**Manual acceptance — passed (owner, 2026-08-06):** created a snapshot; changed and deleted project data; restored into a newly selected Vault folder; opened the restored Vault; confirmed data returned to the snapshot state and loaded normally; the original live Vault was not replaced.
+
+## Known limitations / observations
+
+- **Deferred exclusions (unchanged, not in scope):** automatic/pre-operation snapshots (reserved for Phase 3 hooks), restore-in-place / replace-current-Vault, corrupted-snapshot salvage / "restore anyway", ZIP/portable export, retention automation, cloud/sync.
+- Snapshot integrity is **corruption/accidental-modification detection, not cryptographic authenticity** (no signatures).
+- The write barrier is **defensive**; accepted-write consistency rests on synchronous single-threaded capture of committed state, and the external-change fingerprint abort.
+- **Non-blocking dev observation (not a product defect):** on first `corepack pnpm dev` launch, controls were briefly unresponsive; a full app relaunch resolved it and it did not reproduce during acceptance. Recorded as a possible dev hot-reload / stale-process artifact to watch, not a confirmed defect.
+- Remaining P1 release gaps stay deferred: BL-05 accessibility, BL-06 large-Vault stress, BL-08 installed-build regression.
 
 ## Blockers
 
-- Implementation is blocked until the BL-03 plan is written and owner-approved.
-- Sub-decisions to close in the plan: the exact write-barrier mechanism (autosave flush + mutation guard + watcher pause/resume) and the fingerprint mechanism (before/after external-change detection). (`vaultId` sourcing is now decided: persisted UUID + restored-Vault lineage.)
+None. The next item requires an owner decision (see Current objective).
 
 ## Deferred ideas
 
-Tracked in `.orbit/BACKLOG.md` (BL-01…BL-08, of which BL-03 is now promoted here; plus Project Truth Engine PC-01…PC-05). Do not pull any into active work without owner approval and an entry in this file. The Project Truth bootstrap / context-efficiency capability (PC-01…PC-05) is still reserved for the future Phase 3 brainstorm/spec; it is not active scope and creates no tasks here.
+Tracked in `.orbit/BACKLOG.md` (BL-01…BL-08 — BL-03 now **done**; plus Project Truth Engine PC-01…PC-05). Do not pull any into active work without owner approval and an entry in this file. The Project Truth bootstrap / context-efficiency capability (PC-01…PC-05) remains reserved for the future Phase 3 brainstorm/spec; not active scope.
 
 ## Last verified commit
 
-`32c9026` — `main` (Phase 2 baseline, tag `v0.2.0`). Full suite last verified green at the `v0.2.0` baseline: `pnpm typecheck`, 49/49 `pnpm test`, static UI regression, `pnpm build`. BL-03 is planning-stage only; **no product code has changed** — this update is documentation (Project Truth) recording the approved active phase.
+BL-03 completed on `main`-track branch `docs/bl-03-recovery-backup-plan`. Final code/tooling commit before closeout: `fdc47e9` (corepack tooling fix). The standing gate was re-run green after the closeout documentation changes (docs-only since `fdc47e9`; no product code changed during closeout). Baseline: Phase 2 at tag `v0.2.0`.
