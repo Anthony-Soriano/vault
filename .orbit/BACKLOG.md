@@ -18,7 +18,9 @@ No export, save-dialog, or download path exists anywhere. Add export of a projec
 
 ## From Phase 1.3 (robustness & release)
 
-### BL-03 — Recovery / backup tooling · P1
+### BL-03 — Recovery / backup tooling · P1 — ✅ PROMOTED TO ACTIVE PHASE (2026-08-06)
+> **Promoted out of the backlog by owner approval on 2026-08-06.** Now the active phase — see [`.orbit/CURRENT_PHASE.md`](CURRENT_PHASE.md) and design [`docs/superpowers/specs/2026-08-06-bl-03-recovery-backup-design.md`](../docs/superpowers/specs/2026-08-06-bl-03-recovery-backup-design.md). Scope was refined during brainstorm: **manual** snapshots only (automatic pre-operation snapshots deferred to Phase 3 hooks); consistency handled by a `VACUUM INTO` database capture **plus** managed-file copy under one exclusive write barrier (not raw WAL-file copying); restore into a **new Vault** only (in-place restore deferred); integrity failure **refuses** restore (salvage deferred). Original entry preserved below for history.
+
 Only a `backups/` directory is created (`vault-storage/src/index.ts:182`); there is no backup-writing, snapshot, or restore logic. Add: periodic/triggered `vault.db` snapshots into `backups/`, and a restore path. Coordinate with SQLite WAL checkpointing so snapshots are consistent.
 - Status at audit: **Missing (scaffold only)**.
 
