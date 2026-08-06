@@ -266,7 +266,8 @@ git commit -m "feat(bl-03): persist a location-independent Vault UUID in vault_m
 Append:
 ```ts
 import { mkdtempSync as mk2, writeFileSync, mkdirSync } from "node:fs";
-import { hashTree, treesEqual, fingerprintTree, sqliteLiteralPath } from "@orbit/vault-storage/backup";
+// Per audit correction B: import from "@orbit/vault-storage" (helpers re-exported from src/index.ts), NOT a subpath.
+import { hashTree, treesEqual, fingerprintTree, sqliteLiteralPath } from "@orbit/vault-storage";
 
 test("hashTree is deterministic and detects changes", () => {
   const dir = mk2(join(tmpdir(), "orbit-hash-"));
@@ -786,13 +787,13 @@ Add the facade on `VaultService` (mirror the existing `integrity`/`evidence` mem
   readonly backup = {
     create: (options: CreateSnapshotOptions) => this.repository.createSnapshot(options),
     list: () => this.repository.listSnapshots(),
-    inspect: (snapshotId: string) => this.repository.inspectSnapshot(assertSnapshotId(snapshotId)),
-    delete: (snapshotId: string) => this.repository.deleteSnapshot(assertSnapshotId(snapshotId)),
-    restoreToNewVault: (input: RestoreSnapshotInput) => this.repository.restoreSnapshotToNewVault({ snapshotId: assertSnapshotId(input.snapshotId), targetPath: String(input.targetPath) }),
+    inspect: (snapshotId: string) => this.repository.inspectSnapshot(assertIdentifier(snapshotId)),
+    delete: (snapshotId: string) => this.repository.deleteSnapshot(assertIdentifier(snapshotId)),
+    restoreToNewVault: (input: RestoreSnapshotInput) => this.repository.restoreSnapshotToNewVault({ snapshotId: assertIdentifier(input.snapshotId), parentPath: String(input.parentPath), folderName: String(input.folderName) }),
     diskUsage: () => this.repository.backupsDiskUsage(),
   };
 ```
-Add `assertSnapshotId` near the existing validators (throws `VaultDomainError("VALIDATION_ERROR", …)` unless `/^[A-Za-z0-9._-]+$/`). Import the new types from `@orbit/vault-types`.
+Per audit correction D, reuse the existing `assertIdentifier` (its regex `/^[a-zA-Z0-9_-]{6,80}$/` already blocks `/`, `\`, and `.`) — do **not** add a separate `assertSnapshotId`. Import the new types from `@orbit/vault-types`.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -977,7 +978,7 @@ git commit -m "test(bl-03): extend static regression; verify gate; record implem
 - Restore to new vault only, staging + atomic finalize, validate-before-write, refuse on mismatch, schema guard → Task 6. ✅
 - Round-trip = logical + file-hash equivalence → Task 6 Step 1. ✅
 - IPC via handle(...) / preload / renderer, renderer never touches fs → Tasks 8–10. ✅
-- Path-traversal id guard → Task 5 + Task 7 (`assertSnapshotId`). ✅
+- Path-traversal id guard → Task 5 + Task 7 (reuse `assertIdentifier`, per audit correction D). ✅
 - Standing gate → Task 11. ✅
 - Exclusions (no auto-triggers, no in-place restore, no salvage/zip/retention) → not implemented by design; nothing in the plan adds them. ✅
 
