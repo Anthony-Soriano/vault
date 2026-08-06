@@ -1,3 +1,5 @@
+> **HISTORICAL — SUPERSEDED.** Kept for reference only. The canonical project docs live in the repo root; start at `AGENTS.md`. Do not treat this file as current.
+
 ## Goal
 
 Change the Atlas graph's visual style away from the current rigid radial/wedge layout toward an organic, Obsidian-graph-style force layout — while keeping the one property that actually matters: **each project's nodes stay visually clustered together and never intermingle with another project's nodes.**

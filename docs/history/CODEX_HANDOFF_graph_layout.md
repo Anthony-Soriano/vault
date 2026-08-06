@@ -1,3 +1,5 @@
+> **HISTORICAL — SUPERSEDED.** Kept for reference only. The canonical project docs live in the repo root; start at `AGENTS.md`. Do not treat this file as current.
+
 Claude just reworked the Atlas graph layout/physics (`hierarchyGraph.ts` + `GraphViewV2.tsx`). The changes are already on disk but need to be built and verified. Do this:
 
 ## 1. Install and restart

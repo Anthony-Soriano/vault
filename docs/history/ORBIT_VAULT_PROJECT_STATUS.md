@@ -1,3 +1,5 @@
+> **HISTORICAL — SUPERSEDED.** Kept for reference only. The canonical project docs live in the repo root; start at `AGENTS.md`. Do not treat this file as current.
+
 # Orbit Vault — Project Status & Work Log
 
 **Snapshot date:** 2026-08-05

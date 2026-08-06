@@ -23,7 +23,7 @@ Rules for every coding model:
 6. `ROADMAP.md` — the ordered journey and definitions of done.
 7. `CURRENT_PHASE.md` — the operational center. Only implement what is written here.
 
-Supporting: `docs/BACKLOG.md` (deferred ideas), `docs/architecture.md` + `ORBIT_VAULT_MASTER_HANDOFF.md` (historical detail), `docs/superpowers/` (specs, plans, task briefs).
+Supporting: `docs/BACKLOG.md` (deferred ideas), `docs/SETUP.md` (install/run/package), `docs/architecture.md` (deeper design reference, may lag), `docs/superpowers/` (specs, plans, task briefs). Historical/superseded material is under `docs/history/` — reference only, never current.
 
 ## How to apply the rules
 
