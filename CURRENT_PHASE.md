@@ -37,4 +37,4 @@ Tracked in `docs/BACKLOG.md` (BL-01 … BL-08). Do not pull them into active wor
 
 ## Last verified commit
 
-`a1fd7b1` — tag `v0.2.0` (Phase 2 baseline). Full suite green: `pnpm typecheck`, 49/49 `pnpm test`, static UI regression, `pnpm build`. (Documentation-only commits have landed on `main` since; no code changed.)
+`99ff365` — `main` (Phase 2 baseline, tag `v0.2.0` at `a1fd7b1`). Full suite re-verified green after the doc reorganization and the 0.2.0 version bump, on a clean `pnpm install --frozen-lockfile`: `pnpm typecheck`, 49/49 `pnpm test`, static UI regression, `pnpm build`. Only documentation and version metadata have changed since the baseline; no product code changed.
