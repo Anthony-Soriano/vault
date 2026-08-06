@@ -68,6 +68,31 @@ assert.doesNotMatch(main, /vault:integrity:analyze"[^;]*, true\)/, "integrity an
 requireContract(preload, /integrity: \{ analyze: \(projectId\) => call\("vault:integrity:analyze", projectId\) \},/, "preload integrity.analyze bridge method");
 requireContract(types, /integrity: \{ analyze\(projectId: string\): Promise<ApiResult<IntegrityReport>> \};/, "VaultRendererApi integrity contract");
 
+// --- BL-03 Recovery & Backup contract ---
+const backups = read("apps/vault-desktop/renderer/src/BackupsView.tsx");
+const app = read("apps/vault-desktop/renderer/src/App.tsx");
+const backupChannels = ["vault:backup:create", "vault:backup:list", "vault:backup:inspect", "vault:backup:delete", "vault:backup:disk-usage", "vault:backup:restore"];
+for (const channel of backupChannels) {
+  requireContract(main, new RegExp(`\\"${channel}\\"`), `main channel ${channel}`);
+  requireContract(preload, new RegExp(`\\"${channel}\\"`), `preload channel ${channel}`);
+}
+requireContract(main, /handle\("vault:backup:create", \(\) => withWriteBarrier\(\(\) => vault\.backup\.create\(\{ appVersion: app\.getVersion\(\) \}\)\), true\);/, "backup create must run under withWriteBarrier and be marked mutating");
+requireContract(main, /handle\("vault:backup:delete", \(snapshotId: string\) => vault\.backup\.delete\(snapshotId\), true\);/, "backup delete main handler (mutating)");
+assert.doesNotMatch(main, /vault:backup:inspect"[^;]*, true\)/, "backup inspect must not be marked mutating");
+assert.doesNotMatch(main, /vault:backup:list"[^;]*, true\)/, "backup list must not be marked mutating");
+requireContract(types, /backup: \{\s*create\(\): Promise<ApiResult<SnapshotSummary>>;/, "VaultRendererApi backup contract");
+for (const method of ["create", "list", "inspect", "delete", "restoreToNewVault", "diskUsage"]) {
+  requireContract(backups, new RegExp(`window\\.vault\\.backup\\.${method}\\(`), `BackupsView must call backup.${method}`);
+}
+for (const label of ["Create snapshot", "Inspect", "Restore…", "Delete", "on disk"]) {
+  requireContract(backups, new RegExp(label), `Missing Backups UI label: ${label}`);
+}
+requireContract(app, /view==="backups"/, "App must mount the Backups view");
+requireContract(app, /<BackupsView /, "App must render BackupsView");
+for (const selector of [".backups-view", ".backups-list", ".backups-item", ".backups-inspection"]) {
+  assert.match(styles, new RegExp(selector.replace(/\./g, "\\.")), `Missing Backups UI style: ${selector}`);
+}
+
 const orbitDesktopBridge = types.match(/export interface OrbitDesktopBridge \{([\s\S]*?)\n\}/)?.[1] ?? "";
 for (const method of ["restore", "supersede", "previewMerge", "merge", "history"]) {
   assert.doesNotMatch(orbitDesktopBridge, new RegExp(`\\b${method}\\b`), `Lifecycle method ${method} must not be added to OrbitDesktopBridge`);
