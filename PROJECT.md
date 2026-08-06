@@ -1,0 +1,41 @@
+PROJECT.md
+A readable overview:
+
+## What Orbit Vault is
+
+A local-first desktop application (Electron + React/Vite + SQLite) that turns a project's files, notes, and decisions into an **editable, transparent, evidence-backed memory layer**. Everything lives on the user's machine; ordinary local files remain the source of truth for content, while a local database stores identity, structure, and relationships.
+
+## Who it is for
+
+Individuals and technical users managing complex, long-lived projects who need a **trustworthy, inspectable project memory** they fully own — and, later, the wider Orbit platform, which will consume Vault through a stable API rather than reading its database directly.
+
+## The core problem
+
+Note and knowledge tools force a bad trade: cloud tools take custody of your data, and unstructured tools become piles you can't reason over. AI layers make it worse by hallucinating and mutating content silently. Users have no locally-owned, structured, evidence-backed memory that they remain in control of.
+
+## The product thesis
+
+> **Documents are source material. Knowledge objects are interpretations. Evidence connects the two. Users stay in control.**
+
+Models may eventually *propose* knowledge, but never silently mutate it. Confidence is metadata, not truth.
+
+## Product principles
+
+- **Local-first.** State lives on the user's machine; no required cloud.
+- **Ordinary files are content truth.** The database indexes and relates; it never becomes the sole home of content.
+- **Transparency.** Every interpretation carries its source and evidence.
+- **User approval.** Nothing becomes canonical without an explicit user action.
+- **Determinism where possible.** Objective checks are rule-based and reproducible; semantic judgment is deferred to a clearly-gated AI phase.
+- **The graph is a view.** Atlas visualizes canonical data; it is never a second database.
+
+## What it is not
+
+Not a cloud notes app. Not a graph-database UI. Not an autonomous agent that edits your data. Not a place where AI silently writes "truth." Not a second source of organization hidden in the graph.
+
+## Current status
+
+**v0.2.0 — Phase 2 complete.** The manual knowledge system is done: projects, folders, documents/files, knowledge objects, typed relationships, evidence, plus the Phase 2.4 lifecycle (history / supersede / merge) and deterministic integrity checks. No AI subsystem exists yet. Phase 3 (AI proposals) is the next milestone and is **not yet planned**. Deferred Phase 1.2/1.3 items are tracked in `docs/BACKLOG.md`.
+
+## Reading order
+
+`AGENTS.md` → `PROJECT.md` → `PRODUCT_SPEC.md` → `ARCHITECTURE.md` → `DECISIONS.md` → `ROADMAP.md` → `CURRENT_PHASE.md`.
