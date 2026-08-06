@@ -5,6 +5,8 @@ A readable overview:
 
 A local-first desktop application (Electron + React/Vite + SQLite) that turns a project's files, notes, and decisions into an **editable, transparent, evidence-backed memory layer**. Everything lives on the user's machine; ordinary local files remain the source of truth for content, while a local database stores identity, structure, and relationships.
 
+More broadly, Orbit Vault is a local-first **Project Truth Engine**: it turns a project's files, code, notes, and decisions into a compact, evidence-backed, human-editable, AI-readable representation — a **Project Truth** layer that humans and AI tools can reuse to orient themselves instead of reconstructing the whole project from scratch every time. Today that Project Truth stack (this `.orbit/` set) is authored and maintained by hand; automatically detecting, drafting, and proposing it from repository evidence is a **planned** capability (see the roadmap), not implemented yet.
+
 ## Who it is for
 
 Individuals and technical users managing complex, long-lived projects who need a **trustworthy, inspectable project memory** they fully own — and, later, the wider Orbit platform, which will consume Vault through a stable API rather than reading its database directly.
@@ -21,7 +23,7 @@ Models may eventually *propose* knowledge, but never silently mutate it. Confide
 
 ## Why Orbit Vault exists
 
-AI allows projects to grow and change faster than people can keep them understandable. Orbit Vault exists to preserve project understanding as complexity increases, so users and their tools can determine what the project is, why decisions were made, and what remains true.
+Orbit Vault exists because projects now grow and change faster than people — and especially AI sessions — can repeatedly reconstruct them. Without a maintained truth layer, every new contributor and every AI tool (Claude, Codex, Cursor, GPT, local models) re-spends time, tokens, and reasoning rediscovering what the project is, how it works, why decisions were made, and what remains true. Vault turns project evidence into a durable, compact, inspectable **Project Truth** layer so humans and tools can gain that understanding without analyzing the entire project from scratch every time.
 
 ## Product principles
 
@@ -31,6 +33,7 @@ AI allows projects to grow and change faster than people can keep them understan
 - **User approval.** Nothing becomes canonical without an explicit user action.
 - **Determinism where possible.** Objective checks are rule-based and reproducible; semantic judgment is deferred to a clearly-gated AI phase.
 - **The graph is a view.** Atlas visualizes canonical data; it is never a second database.
+- **Context efficiency.** Vault should minimize repeated project reconstruction. Approved Project Truth gives humans and AI a compact orientation layer before deeper repository inspection is needed. (This is a guiding goal; automated Project Truth generation is planned, not yet implemented.)
 
 ## What it is not
 

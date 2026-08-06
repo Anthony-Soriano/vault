@@ -33,7 +33,9 @@ Not applicable while no phase is active. The standing verification gate for any 
 
 ## Deferred ideas
 
-Tracked in `.orbit/BACKLOG.md` (BL-01 … BL-08). Do not pull them into active work without owner approval and an entry in this file.
+Tracked in `.orbit/BACKLOG.md` (BL-01 … BL-08, plus the newly recognized Project Truth Engine items PC-01 … PC-05). Do not pull them into active work without owner approval and an entry in this file.
+
+The newly clarified **Project Truth bootstrap / context-efficiency** capability (Project Truth Engine, `.orbit/BACKLOG.md` PC-01…PC-05) must be considered during the owner-approved Phase 3 brainstorm and specification process. It is not active scope and creates no tasks here yet.
 
 ## Last verified commit
 

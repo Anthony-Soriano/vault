@@ -34,6 +34,15 @@ The `.orbit/` directory is the authoritative project truth. Supporting: `docs/SE
 - **Rule 8:** required verification is `pnpm typecheck`, `pnpm test`, `pnpm build`, and `node scripts/phase2-lifecycle-ui-regression.mjs`. All must pass before claiming completion.
 - **Rule 9:** after completed work, update `.orbit/CURRENT_PHASE.md` (active tasks, last verified commit).
 
+## Working with Project Truth
+
+Start with approved Project Truth (`.orbit/`) before performing broad repository analysis. Inspect source files as needed to verify claims or complete the current task; do not assume Project Truth replaces code-level evidence.
+
+- **Project Truth** is the orientation and reusable context layer.
+- **Source code and tests** remain the final evidence for implemented technical reality.
+- Do not reread the entire repository unnecessarily.
+- Do not blindly trust stale documentation when the task requires verification — verify against code and report conflicts (Rule 6).
+
 ## Document authority
 
 Each document is authoritative only for its assigned domain:

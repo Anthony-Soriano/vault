@@ -45,3 +45,22 @@ Packaging config exists (`electron-builder.yml`, win/nsis, `Orbit-Vault-${versio
 ---
 
 **Phase 1.2 / 1.3 disposition:** implemented portions are complete (file import, attachments via Document/File, reveal/open, external change detection); the items above capture everything deferred. With this backlog recorded, Phase 1.2 and 1.3 can be treated as **closed, remainder tracked here** — no silent gaps.
+
+## Project Truth Engine capabilities (newly recognized)
+
+Separate from BL-01…BL-08 (which came from the Phase 1.2/1.3 reconciliation audit). These capture the clarified **Project Truth Engine** product concept. All are **deferred and not approved implementation scope**; priorities are intentionally unassigned until the owner approves them. They must be considered during the owner-approved Phase 3 brainstorm/spec (see `.orbit/CURRENT_PHASE.md`).
+
+### PC-01 — Project Truth readiness scan
+Detect whether a project has a complete, partial, missing, stale, duplicated, or conflicting Project Truth stack.
+
+### PC-02 — Evidence-backed Project Truth bootstrap
+Analyze repository evidence and generate drafts for missing Project Truth documents, while clearly separating inferred technical facts from owner-supplied intent.
+
+### PC-03 — Project Truth change proposals
+Observe meaningful project changes and propose updates to affected Project Truth documents with evidence and diffs.
+
+### PC-04 — Context package for external AI tools
+Expose a compact, controlled Project Truth/context package that Claude, Codex, Cursor, GPT, local models, and future Orbit tools can consume before deeper file inspection.
+
+### PC-05 — Context efficiency measurement
+Measure whether Vault reduces files read, input tokens, repeated repository analysis, orientation time, and unnecessary model cost compared with working without Vault.

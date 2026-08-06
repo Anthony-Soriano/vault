@@ -1,6 +1,6 @@
 # Orbit Vault
 
-> A local-first AI knowledge system that turns a project's files, notes, and decisions into an editable, transparent, evidence-backed memory layer — fully owned on your machine.
+> A local-first **Project Truth Engine** that turns a project's files, notes, code, and decisions into a compact, editable, transparent, evidence-backed context layer for humans and AI — fully owned on your machine.
 
 **Status:** `v0.2.0` — Phase 2 complete (manual knowledge system: documents, knowledge objects, evidence, typed relationships, lifecycle, and deterministic integrity). No AI subsystem yet; Phase 3 (AI proposals) is the next milestone.
 

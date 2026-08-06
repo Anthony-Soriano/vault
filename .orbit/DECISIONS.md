@@ -11,6 +11,9 @@ Nothing becomes canonical project memory without an explicit user action (approv
 ### Provenance is mandatory
 Every interpretation (and every future model-generated object) must carry evidence linking it to source material. **Why:** knowledge without traceable evidence is indistinguishable from a guess.
 
+### Project Truth is a reusable context layer
+Vault maintains a compact, human-editable, evidence-backed representation of a project so humans and AI tools can orient themselves without repeatedly reconstructing the entire repository. **Why:** repeated project discovery wastes time, model context, tokens, and reasoning. Persisting approved understanding lets future sessions spend more effort solving the current task.
+
 ## Data and storage
 
 ### Local-first
@@ -26,6 +29,9 @@ Persistence uses Node 22's built-in `node:sqlite`, not a native module. **Why:**
 
 ### AI only proposes
 When AI exists (Phase 3), it generates candidate knowledge with citations and never writes canonical state directly. **Why:** models are fallible; letting them mutate memory silently would destroy the product's trust model.
+
+### AI-generated Project Truth requires approval
+Vault may detect missing or stale Project Truth and generate drafts or proposed updates, but it never silently creates, replaces, or promotes AI-generated documentation as authoritative. **Why:** repository analysis can infer technical reality but may misinterpret intent, product direction, or historical reasoning. Owner review preserves trust.
 
 ## Architecture and integration
 

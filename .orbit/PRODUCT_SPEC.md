@@ -14,6 +14,7 @@ The complete product contract:
 - Reconcile and retire knowledge safely (supersede, merge duplicates) with a full audit trail.
 - Trust the store: find objective problems (missing evidence, broken links, duplicates) without guesswork.
 - Navigate the whole project visually (Atlas) without that view becoming the system of record.
+- Give humans and AI a compact, trusted orientation layer so they do not need to repeatedly analyze the entire project before useful work can begin.
 
 ## Core workflows
 
@@ -23,6 +24,34 @@ The complete product contract:
 4. **Lifecycle (Phase 2.4)** — inspect immutable history; supersede an object; merge duplicates (preview → confirm) keeping the target canonical and moving evidence/relationships.
 5. **Integrity (Phase 2.4)** — run deterministic checks and route each finding into the matching fix.
 6. **Atlas** — interactive force-directed projection of projects/folders/documents (+ optional knowledge/relationship overlays).
+
+## Project Truth Bootstrap (planned — not implemented)
+
+A **planned** capability (foundation in Phase 3) for initializing and maintaining a project's **Project Truth** stack from local evidence. It never overwrites anything automatically: it detects gaps, analyzes available project evidence locally, generates evidence-backed drafts, shows what was inferred and from where, and asks the owner to review, edit, approve, merge, replace, or reject before anything is written.
+
+It handles three project states:
+
+- **No Project Truth exists** — Vault detects that the project lacks a structured truth stack and offers to generate evidence-backed drafts.
+- **Partial Project Truth exists** — Vault identifies missing documents or incomplete domains and proposes only the missing pieces.
+- **Existing Project Truth exists** — Vault audits for stale, conflicting, duplicated, or unsupported claims and proposes updates without overwriting anything automatically.
+
+Each proposal supports these owner actions: **Create · Merge · Replace · Skip · Keep existing file authoritative.**
+
+Evidence boundaries:
+
+- Repository evidence can safely support **technical facts**: detected stack, package layout, implemented architecture, schemas, tests, build commands, implemented features, current version, and explicit TODOs.
+- **Intent-based truth** normally requires owner input: original vision, target users, why the project matters, intended product behavior, roadmap priorities, non-negotiable principles, and the reasons behind historical decisions.
+
+Rule: **Code can provide evidence of what exists. It cannot reliably establish why the project exists or what the owner intends next.**
+
+Expected benefits (directional; not promised as specific figures until measurable — see `.orbit/BACKLOG.md` PC-05):
+
+- lower repeated AI context usage
+- less repeated repository crawling
+- faster model and contributor onboarding
+- reduced reasoning spent reconstructing project state
+- improved human project understanding
+- portable context across Claude, Codex, Cursor, GPT, local models, and future tools
 
 ## Canonical entities
 

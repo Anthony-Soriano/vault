@@ -38,12 +38,13 @@ Status reflects `main` / tag `v0.2.0`. "Planned" phases are not scope until writ
 - **Objective:** AI proposes cited candidate knowledge; the user approves.
 - **Dependencies:** complete manual system + deterministic integrity (done), plus a model provider. (No provider is approved; a local model such as Ollama is one example only, not a decision.)
 - **Deliverables:** project-scoped assistant, transparent context builder, evidence-cited proposals, approve/edit/merge/reject flow.
+- **Project Truth foundation (part of Phase 3):** local project analysis; transparent context construction; evidence-backed **Project Truth** proposals; detection of missing, incomplete, or stale Project Truth; and owner review and approval before any file is created or updated (the Project Truth Bootstrap workflow in `.orbit/PRODUCT_SPEC.md`).
 - **Done when:** AI can propose knowledge with provenance that the user reviews before anything becomes canonical; no direct DB access; no silent mutation.
-- **Exclusions:** autonomous mutation, hidden memory, cross-project context leakage.
+- **Exclusions:** autonomous mutation, hidden memory, cross-project context leakage. Analysis is local-first — the design must not require sending the entire repository to a remote model, and remains provider-neutral (no provider chosen).
 
 ### Phase 4 — Project DNA ⬜
 - **Objective:** derived, regenerable project intelligence (purpose, architecture, goals, decisions, open questions, known problems).
-- **Dependencies:** Phase 3.
+- **Dependencies:** Phase 3. Builds on the approved Project Truth stack and the canonical knowledge layer to produce deeper derived project intelligence.
 - **Done when:** DNA is regenerated from approved state with evidence references; never a second manual source of truth.
 
 ### Phase 5 — Semantic drift & conflict detection ⬜
