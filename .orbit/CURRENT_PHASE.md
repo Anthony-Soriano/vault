@@ -1,113 +1,112 @@
 This is the operational center. Do not implement work that is absent from this file (Rule 3, root `AGENTS.md`). Update it after completed work (Rule 9); run the full closeout when completing a phase (Rule 11).
 
-**State: PHASE 3 ACTIVE — slice `v0.3.1` (Project Context & Repository Analysis) is COMPLETE and verified. Between slices: `v0.3.2` is NOT activated; awaiting owner approval to advance.** `v0.3.0` (AI Foundation) is complete and locked at tag `v0.3.0`; `v0.3.1` is complete and tagged `v0.3.1`. `v0.3.2`–`v0.3.5` remain **planned and inactive** — not approved implementation scope until this file is updated with owner approval. Phase 2 is complete and locked at tag `v0.2.0`; BL-03 (Recovery & Backup) is complete (owner acceptance 2026-08-06).
+**State: PHASE 3 ACTIVE — slice `v0.3.2` (Project Truth Bootstrap) is ACTIVATED for DESIGN & PLANNING (owner approval 2026-08-07).** No production code is authorized yet: this activation covers writing the approved design/spec and execution plan. Implementation begins only after the plan is complete and this file records approved implementation tasks. `v0.3.0` (AI Foundation) and `v0.3.1` (Project Context & Repository Analysis) are complete and locked at tags `v0.3.0`/`v0.3.1`. `v0.3.3`–`v0.3.5` remain **planned and inactive**. Phase 2 is complete and locked at tag `v0.2.0`; BL-03 (Recovery & Backup) is complete (owner acceptance 2026-08-06).
 
 ## Current objective
 
-None active. `v0.3.1` (Project Context & Repository Analysis) is delivered and verified (see "Just completed"). Awaiting an owner decision to approve advancement to `v0.3.2` (Project Truth Bootstrap). No `v0.3.2` work is authorized.
+Design and plan **`v0.3.2` — Project Truth Bootstrap**: use repository evidence (via the `v0.3.1` context analysis) + the `v0.3.0` proposal pipeline to draft **missing** Project Truth as **evidence-backed, non-canonical, ephemeral proposals**, cleanly separating inferred technical facts from owner-intent that cannot be inferred. Produce the approved design/spec and execution plan; then implement in small TDD tasks (Rule 7). **Nothing AI-generated becomes canonical; no proposal store; no approve/edit/save/merge/replace execution (that is `v0.3.3`).**
 
-## Just completed — v0.3.1 Project Context & Repository Analysis
+## Owner-approved decisions (2026-08-07) — binding for this slice
 
-A deterministic, local-first, **read-only** analysis capability. It discovers a project's evidence, detects Project Truth readiness, and builds a targeted, source-traceable context package — with no Project Truth generation, no model invocation, no proposals, and no canonical mutation. All `v0.3.0` trust invariants hold unchanged.
+These four decisions are locked (also recorded in `.orbit/DECISIONS.md`):
 
-- **`packages/vault-types`** — additive contracts: `ProjectEvidenceCategory`, `RawEvidenceFile`, `ProjectEvidenceItem`, `ProjectEvidenceInventory`, `ProjectTruthReadinessState`, `ProjectTruthReadiness`, `ProjectContextAnalysis`; read-only `context.analyze` on `VaultRendererApi`. The `v0.3.0` `AiContextPackage`/`AiContextItem` contracts are reused verbatim.
-- **`packages/vault-core`** — pure analyzers (no fs/SQLite): `classifyEvidence`, `detectProjectTruthReadiness`, `selectContextEvidence`, `buildProjectContextPackage`; `PROJECT_CONTEXT_RULE_VERSION`, `PROJECT_CONTEXT_LIMITS`; `VaultService.context.analyze` (validates the id, delegates). Classification/readiness are byte-deterministic (no clock); packaging takes an injected clock.
-- **`packages/vault-storage`** — `SqliteVaultRepository.analyzeProjectContext(projectId)`: read-only walk of `projects/<id>/` reusing the reconciler `IGNORED_DIRECTORIES`/`IGNORED_FILES`, `safeLinkedKind`, and the shared `MAX_VISITED_ENTRIES` (25,000) cap (degrades to `truncated` instead of throwing); bounded, path-safe content reads; composes the pure analyzers. No writes.
-- **`apps/vault-desktop`** — read-only `vault:context:analyze` IPC (no `mutates`) + `window.vault.context.analyze` + a minimal, read-only `ProjectContextView` (readiness verdict, evidence inventory by category, context-package items). No edit/approve/generate controls.
-- **Tests** — `tests/phase3-project-context.test.ts` (15): classification, all readiness states, byte-identical determinism, targeted/bounded packaging, storage discovery, ignore/boundary/isolation, and no-mutation.
-- **Settled implementation details (within approved scope):** `todo_marker` is filename-based (not a content scan); context packages are bounded by `PROJECT_CONTEXT_LIMITS` (≤40 items, ≤4000 chars/item) to stay targeted; discovery degrades gracefully at the cap.
-- **Deliberately NOT done** (later slices / owner approval required): no Project Truth generation (`v0.3.2`); no proposal review UI (`v0.3.3`); no knowledge proposal engine (`v0.3.4`); no maintenance proposals (`v0.3.5`); no live model call; no canonical mutation.
+1. **Existing Project Truth boundary.** `v0.3.2` handles bootstrap and **structural gap-fill only**. For an existing/complete stack, existing documents remain authoritative by default. Deep semantic staleness detection, ongoing change detection, and maintenance/update proposals belong to **`v0.3.5`** — do **not** pull the maintenance engine into `v0.3.2`.
+2. **Draft persistence.** Project Truth drafts are **ephemeral**. No proposal database/store, no canonical writes, no approve/edit/save/merge/replace execution. Persistence, review, approval, lifecycle, and audit belong to **`v0.3.3`**.
+3. **Evidence validation.** A model citation is not trusted merely because it appears in the AI response. Evidence references used to support a **technical fact** must resolve to evidence actually present in the Project Context inventory/package supplied to the model. Unverifiable references must **never** be presented as an evidence-backed technical fact (they are downgraded to owner-input-needed / inferred).
+4. **Existing-state disposition.** Existing authoritative Project Truth defaults to `keep_existing`. Do not generate replacement/change recommendations that would effectively introduce `v0.3.5` behavior.
+5. **Planner authority over bootstrap scope (binding invariant).** The planner (`planProjectTruthBootstrap`) is the sole authority over which documents exist, which are targeted, their state, and the generation scope. The AI fills planner-selected slots only — it may **never** invent additional Project Truth documents nor silently skip a planner-selected target. Enforced structurally: draft mapping iterates the plan's targets (never the provider's proposals); unmatched proposals are discarded, unmatched targets still emit a `proposal: null` draft. Future hardening (documented, not implemented in v0.3.2): match proposals by an explicit `targetDoc` id rather than response ordering; and evolve `PROJECT_TRUTH_BOOTSTRAP_RULE_VERSION` into an explicit semantic/versioned identifier.
 
-## Verification (`v0.3.1`) — Rule 11
+## Scope (v0.3.2) — approved design intent
 
-Full standing gate re-run **green on 2026-08-06** on the integrated tree, via `corepack pnpm` (Windows):
+Derived from `.orbit/ROADMAP.md` (v0.3.2), `.orbit/PRODUCT_SPEC.md` (Project Truth Bootstrap; PC-02), and the four owner decisions above. In scope:
 
-- `corepack pnpm typecheck` — electron 0, renderer 0.
-- `corepack pnpm test` — **100/100** (85 prior + 15 new `tests/phase3-project-context.test.ts`).
-- `corepack pnpm build` — electron main + preload + renderer all build.
-- `node scripts/phase2-lifecycle-ui-regression.mjs` — passed; now also asserts the read-only `vault:context:analyze` contract (present, no `mutates`, preload + type + UI wiring).
-
-## Design & approved scope (v0.3.1) — for the record
-
-Derived from `.orbit/ROADMAP.md` (v0.3.1) and `.orbit/PRODUCT_SPEC.md` (Project Truth Bootstrap evidence boundaries; PC-01/PC-04). In scope:
-
-1. **Repository evidence discovery.** Given a project boundary, produce a deterministic inventory of relevant files. Same input → identical output (stable, normalized ordering).
-2. **Ignore rules & filesystem boundaries.** Discovery honors ignore semantics consistent with the existing reconciler (`.git`, `node_modules`, `dist`, caches, etc.), stays inside the project boundary, constrains symlink traversal, and respects a visited-entry cap (reuse the reconciler's 25,000-entry defensive cap semantics). It never reads outside the project.
-3. **Structure & technical-evidence identification.** Classify discovered evidence into meaningful, **technical-fact** categories only (e.g., package/manifest files, config, schema/migrations, tests, docs, source layout, explicit TODO markers). No inference of owner intent (per the PRODUCT_SPEC evidence boundary rule).
-4. **Project Truth readiness detection (PC-01).** From the inventory, deterministically classify the project's Project Truth stack as `complete` / `partial` / `missing` / `duplicated` / `potentially-stale`. Any staleness signal is a clearly-labeled deterministic heuristic, never a semantic claim presented as truth.
-5. **Context package construction (PC-04 foundation).** Assemble a transparent, inspectable `AiContextPackage` from **targeted** evidence — never blindly the whole repository. Every context item is traceable to its source. This produces the package a later slice *could* send to a provider; `v0.3.1` itself does not send it to generate anything.
-6. **Purity / boundary placement.** Logic that does not need the filesystem is a **pure analyzer in `packages/vault-core`** (byte-identical output for identical input — invariant 7). Filesystem-touching discovery lives behind the main/`packages/vault-storage`/`VaultService` boundary; the renderer never touches Node/SQLite/fs (invariant 2).
-7. **Project isolation.** Analysis is project-scoped; no cross-project evidence leakage (invariant 5).
-8. **Read-only inspection surface (owner-confirmed 2026-08-06).** Analysis/readiness/context-package results are exposed through a **read-only** `VaultService` method, a **read-only** `vault:*` IPC channel (no `mutates` flag), preload wiring, and a **minimal inspection view** so the packaged evidence, readiness state, and context package are actually observable by the user. No write path, no canonical promotion, no Truth-generation UI. `scripts/phase2-lifecycle-ui-regression.mjs` must assert the new read-only channel's contract.
-9. **Tests + standing gate green** for every new boundary (see Verification).
+1. **Bootstrap orchestration.** Given a project boundary, run the existing read-only `v0.3.1` context analysis, decide which required `.orbit/` documents are missing/partial/present, build targeted per-document context + instructions, and drive the `v0.3.0` `AiService` to produce structured `project_truth` proposals.
+2. **Three project states.** Handle **none** (draft all required docs), **partial** (draft only the missing docs; present docs untouched, `keep_existing`), and **existing/complete** (default `keep_existing`; no change/replacement recommendations — decision 1 & 4).
+3. **Fact/intent separation.** Each draft separates **cited technical facts** (evidence resolvable against the supplied context inventory — decision 3) from **owner-intent gaps** (surfaced as explicit "needs owner input", never invented). Repository evidence supports technical facts only; owner intent is requested, not fabricated.
+4. **Ephemeral, non-canonical output.** The result is returned to the caller for read-only inspection. **No proposal is persisted, no canonical file is written, and no write/approve path exists** (decision 2).
+5. **AI wiring at the service boundary.** `AiService` is composed into `VaultService` (optional dependency) for the first time. The AI layer still holds **no repository** and never touches `vault.db`; `VaultService` reads (read-only `analyzeProjectContext`), builds context, and hands **only context** to `AiService`.
+6. **Read-only inspection surface.** A read-only renderer view + a **non-mutating** `vault:*` IPC channel (no `mutates`, no `vault:changed`) that triggers bootstrap and displays drafts, provenance, cited evidence, and owner-input gaps. No approve/edit/save/merge/replace controls.
+7. **Provider neutrality preserved.** Generation goes through the provider-neutral `AiModelProvider`; the `StubAiProvider` drives the verification gate; no vendor is baked in and no live-provider decision is made here.
+8. **Tests + standing gate green** for every new boundary.
 
 ## Exclusions (out of scope — do NOT build in this slice)
 
-- **No Project Truth Bootstrap / draft generation** (`v0.3.2`): no drafting of PROJECT/PRODUCT_SPEC/ARCHITECTURE/etc. content, no none/partial/existing draft outcomes, no Create·Merge·Replace·Skip actions.
-- **No AI proposal review/approval UI or flow** (`v0.3.3`).
-- **No Knowledge Proposal Engine** (`v0.3.4`) and **no Project Truth maintenance / change proposals** (`v0.3.5`).
-- **No live model invocation to generate content.** `v0.3.1` builds context packages; it does not send them to a provider to produce Project Truth or knowledge. No live vendor provider is introduced.
-- **No promotion to canonical state**, no proposal objects persisted, no mutation of knowledge, documents, or Project Truth files.
-- **No autonomous/background scanning.** Analysis is explicit/triggered, not a watcher-driven or scheduled crawl.
-- **No new AI trust invariants weakened.** All `v0.3.0` invariants continue to hold unchanged.
+- **No proposal persistence / proposal store / new DB table.** Drafts are ephemeral (decision 2).
+- **No approve/edit/save/merge/replace execution, no review/approval UI, no history/audit of proposals** — that is `v0.3.3`.
+- **No Knowledge Proposal Engine** (`v0.3.4`).
+- **No Project Truth maintenance / staleness / change proposals over an evolving project** (`v0.3.5`) — including any replacement/change recommendation for an existing authoritative stack (decisions 1 & 4).
+- **No canonical mutation** of knowledge, documents, or `.orbit/` files. No file-write IPC.
+- **No live vendor provider** baked in; no provider decision.
+- **No autonomous/background generation.** Bootstrap is explicit/triggered only.
+- **No weakening of any `v0.3.0`/`v0.3.1` trust invariant.**
 
-## Acceptance criteria (v0.3.1)
+## Acceptance criteria (v0.3.2)
 
 The slice is done when, verifiably:
 
-1. Given a project directory, discovery returns a **deterministic** inventory (identical input → identical, stably-ordered output), proven by test.
-2. Discovery **respects ignore rules and the project boundary**: ignored paths are excluded, traversal does not escape the project, symlink/cap limits hold — proven by test with fixtures.
-3. Discovered evidence is **classified into technical-fact categories**; no category asserts owner intent.
-4. Readiness detection deterministically returns one of `complete`/`partial`/`missing`/`duplicated`/`potentially-stale` for representative fixtures, with staleness clearly marked heuristic.
-5. A **targeted** `AiContextPackage` is assembled (reusing `v0.3.0` contracts), each item source-traceable, and it is **not** the whole repository dumped verbatim.
-6. **No canonical promotion and no model generation** occurs anywhere in the slice (structurally, not just by convention) — verified by code inspection + tests.
-7. Boundary invariants hold: pure core analyzers are byte-deterministic; fs access stays in main/storage; renderer stays free of Node/SQLite/fs; analysis is project-isolated.
-8. If any IPC channel is added, it is **read-only** (no `mutates`) and asserted by the static UI/IPC regression script.
-9. The full standing gate is green (see Verification), with new tests covering discovery determinism, ignore/boundary rules, readiness classification, and context packaging.
+1. `projectTruth.bootstrap(projectId)` returns a result whose every draft is an `AiProposal` with `status: "proposed"` — proven by test.
+2. Every draft carries provenance: cited `evidence[]` **or** `inferred: true`; a proposal with neither is rejected `AI_RESPONSE_INVALID` — proven by test.
+3. **No canonical-write path exists** in the slice: no repository write, no mutating IPC, no persisted proposal — proven by code inspection + the regression script.
+4. The three states are handled — `missing` → draft all required docs; `partial` → target only missing docs; `complete`/existing → `keep_existing` default with no change recommendations — proven by fixtures.
+5. Technical facts are separated from owner-intent, and every fact's citation **resolves to a path present in the supplied context inventory**; unresolvable citations are downgraded (never presented as evidence-backed) — proven by test (decision 3).
+6. Project isolation holds: context from another project → `AI_PROJECT_ISOLATION`; each draft's `projectId` is stamped from the request — proven by test.
+7. AI-failure and not-configured paths return typed errors (`AI_PROVIDER_ERROR`/`AI_TRANSPORT_ERROR`/`AI_NOT_CONFIGURED`) and mutate nothing — proven by test.
+8. The new IPC channel carries no `mutates` flag, emits no `vault:changed`, and is asserted by `scripts/phase2-lifecycle-ui-regression.mjs`.
+9. The bootstrap orchestrator and `AiService` hold no repository (structural, asserted by construction/inspection).
+10. `v0.3.1` analyzers remain byte-deterministic; the bootstrap **planner** is a pure function tested without a provider.
+11. The renderer view is read-only: no approve/edit/save/merge/replace controls present.
+12. The full standing gate is green (see Verification requirements).
 
 ## Verification requirements (Rule 8 / Rule 11)
 
 All must pass on the integrated tree, via `corepack pnpm` on Windows:
 
 - `corepack pnpm typecheck` — electron 0, renderer 0.
-- `corepack pnpm test` — existing 85 tests plus the new `v0.3.1` suite, all green.
+- `corepack pnpm test` — existing 100 tests plus the new `v0.3.2` suite, all green (gate runs against the deterministic `StubAiProvider` + injected clock).
 - `corepack pnpm build` — electron main + preload + renderer build.
-- `node scripts/phase2-lifecycle-ui-regression.mjs` — passes; asserts any newly added read-only `vault:*` channel.
+- `node scripts/phase2-lifecycle-ui-regression.mjs` — passes; asserts the new non-mutating bootstrap channel (present, no `mutates`, preload + type + UI wiring).
 
 Record exact commands, results (test counts), and the final commit hash in this file on completion (Rule 11 step 3).
 
 ## Risks
 
-- **Scope creep into `v0.3.2` (bootstrap)** — the primary risk. Stop at analysis + packaging; producing any Project Truth *content* is out of scope.
-- **Cross-platform determinism** — path ordering, case-sensitivity, and symlink handling can make output non-byte-identical across filesystems/OSes. Normalize aggressively so invariant 7 holds.
-- **Boundary leakage** — filesystem access must stay in main/storage; the renderer must remain fs-free. Keep pure classification in `vault-core`.
-- **Heuristic staleness mistaken for truth** — readiness/staleness is deterministic heuristic, not semantic judgment; it must be labeled as such and never presented as canonical.
-- **Large repositories** — discovery must honor the visited-entry cap and not freeze (ties to deferred BL-06 large-Vault stress; do not solve BL-06 here, just stay within its cap).
-- **Context selection quality** — "targeted, not whole-repo" is a correctness requirement; over-inclusion silently defeats the context-efficiency purpose.
+- **Scope creep into `v0.3.3` (persistence/approval) and `v0.3.5` (maintenance)** — the primary risk. Keep drafts ephemeral (no store), execute no owner action, and emit no change/replacement recommendations for an existing stack. The structural guards (no write path, ephemeral drafts, no audit engine) mean drift requires *new* code that review must catch.
+- **AI layer gaining implied persistence via `VaultService` composition** — keep `AiService`/the bootstrap orchestrator repository-free; `VaultService` passes only context. Assert by construction.
+- **Fabricated citations presented as facts** — validate every returned `evidence.ref` against the supplied inventory paths; downgrade unresolved refs to owner-input-needed/inferred (decision 3).
+- **Fact/intent blurring in the UI** — render cited evidence distinctly from "needs owner input"; never show an inferred guess as a technical fact.
+- **Non-determinism breaking the gate** — the gate runs against `StubAiProvider` with an injected clock; tests assert shape/invariants/mapping, never model prose.
+- **Provider decision pressure** — ship against the provider-neutral interface + stub; a live provider is a later config/ops concern, not a contract change.
+- **Large repositories** — reuse the capped, read-only `analyzeProjectContext`; do not solve BL-06 here.
 
 ## Active tasks
 
-None. All `v0.3.1` tasks are complete (design doc, execution plan, and the 8 TDD implementation tasks). Documents: [design](../docs/superpowers/specs/2026-08-06-v0.3.1-project-context-repository-analysis-design.md), [execution plan](../docs/superpowers/plans/2026-08-06-v0.3.1-project-context-repository-analysis-execution.md).
+Design/planning activation only. Artifacts:
 
-## Known limitations (preserved, not dropped)
+- **Design/spec:** [`docs/superpowers/specs/2026-08-07-v0.3.2-project-truth-bootstrap-design.md`](../docs/superpowers/specs/2026-08-07-v0.3.2-project-truth-bootstrap-design.md).
+- **Execution plan:** [`docs/superpowers/plans/2026-08-07-v0.3.2-project-truth-bootstrap-execution.md`](../docs/superpowers/plans/2026-08-07-v0.3.2-project-truth-bootstrap-execution.md).
 
-- **`todo_marker` detection is filename-based**, not a content scan — deliberate, to keep discovery targeted and cheap. Content-level TODO/FIXME extraction is a possible later enhancement, not in `v0.3.1`.
-- **Staleness is a single deterministic heuristic** (present-but-empty required doc). Richer, still-deterministic staleness signals — and any *semantic* staleness — are later work (semantic belongs to AI-powered slices, never the deterministic layer).
-- **Large-Vault performance is bounded, not stress-proven** — discovery honors the shared 25,000-entry cap (degrading to `truncated`) but is not load-tested; that remains deferred **BL-06**.
+Implementation tasks (T1–T8 in the execution plan) are authorized to begin once the plan is reviewed; each is test-first and must leave the standing gate green (Rule 7/8).
+
+## Known limitations (design-time, to preserve)
+
+- **No live model provider is selected.** The slice is verified against `StubAiProvider`; producing real drafts from a live model is a later config/ops step, not a contract change. Provider neutrality is preserved.
+- **Drafts are ephemeral** — a generated draft not inspected before the result is discarded is simply regenerated on the next trigger. Persistence is `v0.3.3`.
+- **Evidence validation is path-resolution against the supplied inventory**, not semantic verification that the cited content actually supports the claim (semantic judgment stays clearly AI-labeled and is not a deterministic guarantee).
 
 ## Blockers
 
-- **Model-provider selection remains deferred.** `v0.3.1` does not require a live provider (it builds context, it does not send it to generate content). Provider neutrality is preserved; no vendor decision is made here.
+- **Model-provider selection remains deferred.** `v0.3.2` does not require a live provider for its verification gate (it runs against `StubAiProvider`). No vendor decision is made here.
 
 ## Deferred ideas
 
-Tracked in `.orbit/BACKLOG.md`. PC-01/PC-04 foundations are consumed by this slice; PC-02 (bootstrap) → `v0.3.2`, PC-03 (change proposals) → `v0.3.5`, PC-05 (context-efficiency measurement) remains deferred unless this slice specifically needs it. Do not pull any backlog item into active work without owner approval and an entry in this file.
+Tracked in `.orbit/BACKLOG.md`. PC-02 (bootstrap) is consumed by this slice; PC-03 (change proposals) → `v0.3.5`; PC-05 (context-efficiency measurement) remains deferred. Do not pull any backlog item into active work without owner approval and an entry in this file.
 
 ## Previously completed (prior context)
 
+- **`v0.3.1` — Project Context & Repository Analysis** (COMPLETE, tag `v0.3.1`): deterministic, local-first, read-only evidence discovery, Project Truth readiness detection, and transparent context packaging, plus a read-only Context view. `classifyEvidence`/`detectProjectTruthReadiness`/`selectContextEvidence`/`buildProjectContextPackage` in `vault-core`; `analyzeProjectContext` discovery in `vault-storage`; read-only `vault:context:analyze` IPC + `ProjectContextView`; 15 tests. Full record in `.orbit/ARCHITECTURE.md` (Project Context & Repository Analysis) and `.orbit/DECISIONS.md`.
 - **`v0.3.0` — AI Foundation** (COMPLETE, tag `v0.3.0`): provider-neutral, proposal-only AI layer in `packages/vault-core` (`AiService`, `AiModelProvider`, `StubAiProvider`, `AiProviderError`, `createAiContextPackage`) with AI contracts in `packages/vault-types`; 15 trust-invariant tests; internal plumbing only (not wired to `VaultService`/IPC/renderer). Full record in `.orbit/ARCHITECTURE.md` (AI layer), `.orbit/DECISIONS.md` (Phase 3), `.orbit/ROADMAP.md` (v0.3.0).
 - **BL-03 — Recovery & Backup** (pre-Phase-3 P1): manual, integrity-checked snapshot & restore; `vault:backup:*` IPC + Backups panel; owner acceptance 2026-08-06. Full record in `.orbit/ARCHITECTURE.md`, `.orbit/DECISIONS.md`, `.orbit/BACKLOG.md`, git history (PR #1).
 
 ## Last verified commit
 
-`v0.3.1` — `main`, tagged `v0.3.1` (Phase 3 Project Context & Repository Analysis). Built on the `v0.3.0` baseline (tag `v0.3.0`, `36ee83a`) plus the docs activation checkpoint (`bff5c3e`). The release commit adds the `v0.3.1` analysis code (`packages/vault-types` contracts, `packages/vault-core` pure analyzers + service facade, `packages/vault-storage` discovery, `apps/vault-desktop` read-only IPC/preload/renderer), `tests/phase3-project-context.test.ts`, the regression-script assertions, and the `.orbit/` + `README.md` Project Truth updates. Full standing gate re-verified green on the integrated tree (see "Verification"): typecheck 0/0, **100/100** tests, build OK, regression OK.
+`v0.3.1` — `main`, tagged `v0.3.1` (Phase 3 Project Context & Repository Analysis). Full standing gate green on the integrated tree: typecheck 0/0, **100/100** tests, build OK, regression OK. `v0.3.2` implementation has not begun; this file records the activation of `v0.3.2` design/planning only. No `v0.3.2` code is committed yet.
