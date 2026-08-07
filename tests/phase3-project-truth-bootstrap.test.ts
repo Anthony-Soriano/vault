@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   planProjectTruthBootstrap, PROJECT_TRUTH_BOOTSTRAP_RULE_VERSION,
   classifyEvidence, detectProjectTruthReadiness, buildProjectContextPackage,
-  mapBootstrapDrafts,
+  mapBootstrapDrafts, ProjectTruthBootstrapService, AiService, StubAiProvider, AiProviderError,
 } from "@orbit/vault-core";
 import type { ProjectContextAnalysis, RawEvidenceFile } from "@orbit/vault-types";
 
@@ -113,4 +113,48 @@ test("mapBootstrapDrafts never creates a draft for a document the planner did no
   assert.equal(drafts.length, plan.targets.length); // exactly the planner's targets, no more
   assert.ok(!drafts.some(d => d.targetDoc === ".orbit/NONSENSE.md")); // rogue discarded
   assert.equal(drafts.filter(d => d.targetDoc === ".orbit/PROJECT.md").length, 1); // duplicates collapse to one draft
+});
+
+test("ProjectTruthBootstrapService drafts EVERY planner create-target (per-target calls)", async () => {
+  const svc = new ProjectTruthBootstrapService(new AiService(new StubAiProvider(), { now: fixedNow }), { now: fixedNow });
+  const analysis = analysisOf([file("package.json"), file("src/index.ts")]); // missing → 7 create-targets
+  const res = await svc.bootstrap(analysis);
+  assert.ok(res.ok);
+  if (!res.ok) return;
+  assert.equal(res.value.projectId, PROJECT);
+  assert.equal(res.value.ruleVersion, PROJECT_TRUTH_BOOTSTRAP_RULE_VERSION);
+  assert.equal(res.value.drafts.length, REQUIRED.length); // one draft per planner target
+  const created = res.value.drafts.filter(d => d.suggestedDisposition === "create");
+  assert.equal(created.length, REQUIRED.length);
+  for (const d of created) { assert.ok(d.proposal, `expected a proposal for ${d.targetDoc}`); assert.equal(d.proposal!.status, "proposed"); }
+});
+
+test("ProjectTruthBootstrapService stamps the requested projectId on every proposal (isolation, criterion 6)", async () => {
+  const svc = new ProjectTruthBootstrapService(new AiService(new StubAiProvider(), { now: fixedNow }), { now: fixedNow });
+  const res = await svc.bootstrap(analysisOf([file("package.json")]));
+  assert.ok(res.ok);
+  if (!res.ok) return;
+  for (const d of res.value.drafts) if (d.proposal) assert.equal(d.proposal.projectId, PROJECT);
+});
+
+test("ProjectTruthBootstrapService generates nothing for a complete stack (keep_existing)", async () => {
+  const svc = new ProjectTruthBootstrapService(new AiService(new StubAiProvider(), { now: fixedNow }), { now: fixedNow });
+  const res = await svc.bootstrap(analysisOf(REQUIRED.map(d => file(`.orbit/${d}`))));
+  assert.ok(res.ok);
+  if (!res.ok) return;
+  for (const d of res.value.drafts) { assert.equal(d.suggestedDisposition, "keep_existing"); assert.equal(d.proposal, null); }
+  assert.equal(res.value.provider, null); // no propose call was made
+});
+
+test("ProjectTruthBootstrapService surfaces the FIRST provider failure as a typed error, mutating nothing", async () => {
+  const failing = { id: "boom", model: null, async generate(): Promise<never> { throw new AiProviderError("down"); } };
+  const svc = new ProjectTruthBootstrapService(new AiService(failing, { now: fixedNow }), { now: fixedNow });
+  const res = await svc.bootstrap(analysisOf([file("package.json")]));
+  assert.equal(res.ok, false);
+  if (!res.ok) assert.equal(res.error.code, "AI_PROVIDER_ERROR");
+});
+
+test("ProjectTruthBootstrapService holds no repository (structural)", () => {
+  const svc = new ProjectTruthBootstrapService(new AiService(new StubAiProvider()));
+  assert.equal((svc as unknown as { repository?: unknown }).repository, undefined);
 });

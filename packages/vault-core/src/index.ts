@@ -12,7 +12,7 @@ import type {
 } from "@orbit/vault-types";
 import type {
   ProjectContextAnalysis, ProjectEvidenceCategory, ProjectEvidenceInventory, ProjectEvidenceItem,
-  ProjectTruthReadiness, ProjectTruthReadinessState, RawEvidenceFile, ProjectTruthDocState, ProjectTruthDisposition, ProjectTruthDraft,
+  ProjectTruthReadiness, ProjectTruthReadinessState, RawEvidenceFile, ProjectTruthDocState, ProjectTruthDisposition, ProjectTruthDraft, ProjectTruthBootstrapResult,
 } from "@orbit/vault-types";
 
 export class VaultDomainError extends Error {
@@ -784,4 +784,57 @@ export function mapBootstrapDrafts(input: {
     return { targetDoc: t.targetDoc, docState: t.docState, suggestedDisposition: t.suggestedDisposition, proposal, verifiedEvidence, ownerInputNeeded };
   });
   return { drafts, unresolvedInfo };
+}
+
+/**
+ * Async orchestrator: plan → generate ONE AiService call PER create-target → map/validate → assemble.
+ * Holds an AiService and NO repository — structurally cannot read or write vault.db.
+ * Proposal identity comes from the planner-selected target being processed (owner decision D1),
+ * never from provider response order.
+ */
+export class ProjectTruthBootstrapService {
+  private readonly ai: AiService;
+  private readonly now: () => string;
+  constructor(ai: AiService, options?: { now?: () => string }) {
+    this.ai = ai;
+    this.now = options?.now ?? nowIso;
+  }
+
+  async bootstrap(analysis: ProjectContextAnalysis): Promise<AiResult<ProjectTruthBootstrapResult>> {
+    const plan = planProjectTruthBootstrap(analysis);
+    const createTargets = plan.targets.filter(t => t.suggestedDisposition === "create");
+
+    const proposalsByDoc = new Map<string, AiProposal[]>();
+    let provider: string | null = null;
+    let model: string | null = null;
+
+    for (const target of createTargets) {
+      const response = await this.ai.propose({
+        projectId: analysis.projectId,
+        purpose: target.purpose,
+        context: analysis.contextPackage,
+        desiredKind: "project_truth",
+        instructions: target.instructions,
+      });
+      if (!response.ok) return response; // first failure aborts; nothing mutated, no partial canonical state
+      proposalsByDoc.set(target.targetDoc, response.value.proposals); // identity = the target being processed
+      provider = response.value.provider;
+      model = response.value.model;
+    }
+
+    const { drafts, unresolvedInfo } = mapBootstrapDrafts({ plan, proposalsByDoc, inventory: analysis.inventory });
+    return {
+      ok: true,
+      value: {
+        projectId: analysis.projectId,
+        ruleVersion: PROJECT_TRUTH_BOOTSTRAP_RULE_VERSION,
+        readiness: analysis.readiness,
+        drafts,
+        unresolvedInfo,
+        provider,
+        model,
+        generatedAt: this.now(),
+      },
+    };
+  }
 }
