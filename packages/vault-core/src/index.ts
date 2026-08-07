@@ -12,7 +12,7 @@ import type {
 } from "@orbit/vault-types";
 import type {
   ProjectContextAnalysis, ProjectEvidenceCategory, ProjectEvidenceInventory, ProjectEvidenceItem,
-  ProjectTruthReadiness, ProjectTruthReadinessState, RawEvidenceFile, ProjectTruthDocState, ProjectTruthDisposition,
+  ProjectTruthReadiness, ProjectTruthReadinessState, RawEvidenceFile, ProjectTruthDocState, ProjectTruthDisposition, ProjectTruthDraft,
 } from "@orbit/vault-types";
 
 export class VaultDomainError extends Error {
@@ -756,4 +756,32 @@ export function planProjectTruthBootstrap(analysis: ProjectContextAnalysis): Boo
       : { targetDoc, docState: "missing", suggestedDisposition: "create", purpose: `Draft ${targetDoc} from repository evidence`, instructions: bootstrapInstructions(targetDoc), contextItemIds: itemIds };
   });
   return { projectId: analysis.projectId, ruleVersion: PROJECT_TRUTH_BOOTSTRAP_RULE_VERSION, targets };
+}
+
+// Build a draft per PLANNER target (planner authority). A create-target's proposals are
+// looked up by the target's document identity; the first is used, extras collapse. keep_existing
+// targets never carry a proposal. Proposals keyed to non-planner docs are ignored entirely.
+export function mapBootstrapDrafts(input: {
+  plan: BootstrapPlan;
+  proposalsByDoc: Map<string, AiProposal[]>;
+  inventory: ProjectEvidenceInventory;
+}): { drafts: ProjectTruthDraft[]; unresolvedInfo: string[] } {
+  const knownPaths = new Set(input.inventory.items.map(i => i.relativePath));
+
+  const unresolvedInfo: string[] = [];
+  const drafts: ProjectTruthDraft[] = input.plan.targets.map((t): ProjectTruthDraft => {
+    const proposal = t.suggestedDisposition === "create"
+      ? (input.proposalsByDoc.get(t.targetDoc)?.[0] ?? null)
+      : null;
+    if (!proposal) return { targetDoc: t.targetDoc, docState: t.docState, suggestedDisposition: t.suggestedDisposition, proposal: null, verifiedEvidence: [], ownerInputNeeded: [] };
+    const verifiedEvidence = proposal.provenance.evidence.filter(e => e.ref !== null && knownPaths.has(e.ref));
+    const ownerInputNeeded: string[] = [];
+    for (const e of proposal.provenance.evidence) {
+      if (e.ref !== null && !knownPaths.has(e.ref)) ownerInputNeeded.push(`Unverifiable citation for ${t.targetDoc}: ${e.ref} (not in project evidence) — needs owner confirmation.`);
+    }
+    if (proposal.provenance.inferred || verifiedEvidence.length === 0) ownerInputNeeded.push(`${t.targetDoc}: owner intent could not be inferred from repository evidence — owner input required.`);
+    for (const s of ownerInputNeeded) if (!unresolvedInfo.includes(s)) unresolvedInfo.push(s);
+    return { targetDoc: t.targetDoc, docState: t.docState, suggestedDisposition: t.suggestedDisposition, proposal, verifiedEvidence, ownerInputNeeded };
+  });
+  return { drafts, unresolvedInfo };
 }
