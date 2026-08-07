@@ -64,7 +64,7 @@ Detect whether a project has a complete, partial, missing, stale, duplicated, or
 
 ### PC-02 — Evidence-backed Project Truth bootstrap
 Analyze repository evidence and generate drafts for missing Project Truth documents, while clearly separating inferred technical facts from owner-supplied intent.
-- **Disposition:** planned — Phase 3 **`v0.3.2`** (Project Truth Bootstrap), building on the `v0.3.0` proposal pipeline and `v0.3.1` context analysis. Not active scope yet.
+- **Disposition:** **delivered** — Phase 3 **`v0.3.2`** (Project Truth Bootstrap, complete on branch `feat/v0.3.2-project-truth-bootstrap`, gate green): evidence-backed, ephemeral, proposal-only drafts of *missing* Project Truth, with inferred technical facts (citations validated against the supplied inventory) separated from owner-input gaps. The broader owner-review/approval/persistence surface (Create·Merge·Replace·Skip execution, history/audit) remains **`v0.3.3`**, and ongoing staleness/change proposals remain **`v0.3.5`** — both still planned/inactive. See `.orbit/ARCHITECTURE.md` (Project Truth Bootstrap) and `.orbit/DECISIONS.md` (v0.3.2).
 
 ### PC-03 — Project Truth change proposals
 Observe meaningful project changes and propose updates to affected Project Truth documents with evidence and diffs.
