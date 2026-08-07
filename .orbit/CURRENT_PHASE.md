@@ -1,10 +1,10 @@
 This is the operational center. Do not implement work that is absent from this file (Rule 3, root `AGENTS.md`). Update it after completed work (Rule 9); run the full closeout when completing a phase (Rule 11).
 
-**State: PHASE 3 — BETWEEN SLICES. Slice `v0.3.2` (Project Truth Bootstrap) is COMPLETE and verified (gate green 116/116) on branch `feat/v0.3.2-project-truth-bootstrap`, pending owner merge to `main` + tag `v0.3.2`.** `v0.3.3` is **NOT activated** — no `v0.3.3` work is authorized until this file is updated with owner approval (Rule 3). `v0.3.0`/`v0.3.1` are complete and locked at tags `v0.3.0`/`v0.3.1`. `v0.3.4`/`v0.3.5` remain planned and inactive. Phase 2 is complete and locked at tag `v0.2.0`; BL-03 (Recovery & Backup) is complete (owner acceptance 2026-08-06).
+**State: PHASE 3 — BETWEEN SLICES. Slice `v0.3.2` (Project Truth Bootstrap) is COMPLETE, verified (gate green 116/116), merged to `main` (fast-forward) and tagged `v0.3.2` (owner-approved 2026-08-07).** `v0.3.3` is **NOT activated** — no `v0.3.3` work is authorized until this file is updated with owner approval (Rule 3). `v0.3.0`/`v0.3.1`/`v0.3.2` are complete and locked at tags `v0.3.0`/`v0.3.1`/`v0.3.2`. `v0.3.4`/`v0.3.5` remain planned and inactive. Phase 2 is complete and locked at tag `v0.2.0`; BL-03 (Recovery & Backup) is complete (owner acceptance 2026-08-06).
 
 ## Current objective
 
-None active. `v0.3.2` (Project Truth Bootstrap) is delivered and verified (see "Just completed" and "Verification"). Awaiting owner decisions: (a) merge `feat/v0.3.2-project-truth-bootstrap` into `main` and tag `v0.3.2`; (b) whether to activate `v0.3.3` (AI Proposal Review & Approval). No `v0.3.3` work is authorized.
+None active. `v0.3.2` (Project Truth Bootstrap) is delivered, verified, merged to `main`, and tagged `v0.3.2` (see "Just completed" and "Verification"). The only remaining owner decision is whether to activate `v0.3.3` (AI Proposal Review & Approval). No `v0.3.3` work is authorized until this file is updated with owner approval.
 
 ## Just completed — v0.3.2 Project Truth Bootstrap
 
@@ -138,4 +138,4 @@ Tracked in `.orbit/BACKLOG.md`. PC-02 (bootstrap) is consumed by this slice; PC-
 
 ## Last verified commit
 
-`v0.3.2` — branch `feat/v0.3.2-project-truth-bootstrap`, final code commit `1cb4c9a` (Project Truth Bootstrap; T1–T7 `a8bce05`→`704ea3b` + final-review fix `1cb4c9a`), built on the `main` docs-activation checkpoint `bbb4130` (itself atop tag `v0.3.1`). Full standing gate green on the integrated branch: typecheck 0/0, **116/116** tests, build OK, regression OK. The slice is complete and verified but **not yet merged to `main` or tagged** — that is the owner's next action. `v0.3.3` is not activated.
+`v0.3.2` — merged to `main` via fast-forward and tagged **`v0.3.2`**. Code commits `a8bce05`→`704ea3b` (T1–T7) + final-review fix `1cb4c9a` + Project Truth closeout `cbecd5a`, atop the `main` docs-activation checkpoint `bbb4130` (itself atop tag `v0.3.1`). This closeout-record commit (which finalizes this section) is the tagged `v0.3.2` release point. Full standing gate re-verified green on the merged `main` tree: typecheck 0/0, **116/116** tests, build OK, regression OK. `v0.3.3` is not activated.
