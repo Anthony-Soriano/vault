@@ -12,7 +12,7 @@ import type {
 } from "@orbit/vault-types";
 import type {
   ProjectContextAnalysis, ProjectEvidenceCategory, ProjectEvidenceInventory, ProjectEvidenceItem,
-  ProjectTruthReadiness, ProjectTruthReadinessState, RawEvidenceFile,
+  ProjectTruthReadiness, ProjectTruthReadinessState, RawEvidenceFile, ProjectTruthDocState, ProjectTruthDisposition,
 } from "@orbit/vault-types";
 
 export class VaultDomainError extends Error {
@@ -555,7 +555,7 @@ export class AiService {
 export const PROJECT_CONTEXT_RULE_VERSION = "1";
 
 /** The `.orbit/` documents that constitute a complete Project Truth stack. */
-const REQUIRED_TRUTH_DOCS = [
+export const REQUIRED_TRUTH_DOCS = [
   "PROJECT.md", "PRODUCT_SPEC.md", "ARCHITECTURE.md", "DECISIONS.md",
   "ROADMAP.md", "CURRENT_PHASE.md", "BACKLOG.md",
 ] as const;
@@ -705,3 +705,55 @@ export function buildProjectContextPackage(input: {
 
 /** The bounds discovery/packaging enforce, exported so the storage layer and tests share one source of truth. */
 export const PROJECT_CONTEXT_LIMITS = { maxItems: CONTEXT_MAX_ITEMS, maxChars: CONTEXT_MAX_CHARS } as const;
+
+// --- Phase 3 / v0.3.2 — Project Truth Bootstrap (pure planner) ---
+// Decide which required .orbit/ docs to draft. Pure: no clock, no fs, no model.
+// The planner is the SOLE authority over bootstrap scope (owner invariant): AI fills
+// planner-selected slots only. Present docs default to keep_existing and generate
+// nothing (owner decisions 1 & 4).
+
+export const PROJECT_TRUTH_BOOTSTRAP_RULE_VERSION = "1";
+
+export interface BootstrapTarget {
+  targetDoc: string;
+  docState: ProjectTruthDocState;
+  suggestedDisposition: ProjectTruthDisposition;
+  /** Human-readable reason, fed to AiService as the proposal purpose. */
+  purpose: string;
+  /** Instructions encoding the evidence-boundary rule for this doc. Empty for keep_existing targets. */
+  instructions: string;
+  /** Ids of contextPackage items relevant to this target (kept for traceability). */
+  contextItemIds: string[];
+}
+export interface BootstrapPlan {
+  projectId: string;
+  ruleVersion: string;
+  targets: BootstrapTarget[];
+}
+
+/** Docs whose content is predominantly owner-intent (must be requested, not inferred from code). */
+const INTENT_HEAVY_DOCS = new Set([".orbit/PROJECT.md", ".orbit/DECISIONS.md", ".orbit/ROADMAP.md"]);
+
+const bootstrapInstructions = (targetDoc: string): string => {
+  const base =
+    "Draft ONLY technical facts you can cite to a provided context item. " +
+    "For anything about owner intent, product vision, target users, priorities, or the reasons behind decisions, " +
+    "do NOT invent content — mark it as needing owner input (set inferred=true and add no fabricated citation).";
+  return INTENT_HEAVY_DOCS.has(targetDoc)
+    ? `${base} This document is predominantly owner-intent; expect most of it to require owner input.`
+    : base;
+};
+
+/** Decide bootstrap targets from a read-only ProjectContextAnalysis. Pure/deterministic. */
+export function planProjectTruthBootstrap(analysis: ProjectContextAnalysis): BootstrapPlan {
+  const present = new Set(analysis.readiness.presentDocuments);
+  const itemIds = analysis.contextPackage.items.map(i => i.id);
+  const targets: BootstrapTarget[] = REQUIRED_TRUTH_DOCS.map((doc): BootstrapTarget => {
+    const targetDoc = `.orbit/${doc}`;
+    const isPresent = present.has(targetDoc);
+    return isPresent
+      ? { targetDoc, docState: "present", suggestedDisposition: "keep_existing", purpose: `Keep existing ${targetDoc}`, instructions: "", contextItemIds: [] }
+      : { targetDoc, docState: "missing", suggestedDisposition: "create", purpose: `Draft ${targetDoc} from repository evidence`, instructions: bootstrapInstructions(targetDoc), contextItemIds: itemIds };
+  });
+  return { projectId: analysis.projectId, ruleVersion: PROJECT_TRUTH_BOOTSTRAP_RULE_VERSION, targets };
+}
