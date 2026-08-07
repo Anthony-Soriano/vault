@@ -420,6 +420,44 @@ export interface ProjectContextAnalysis {
   generatedAt: string;
 }
 
+// --- Phase 3 / v0.3.2 — Project Truth Bootstrap contracts ---
+// Draft *missing* Project Truth as non-canonical, ephemeral proposals. Reuses the
+// v0.3.0 AiProposal/AiProvenance/AiEvidenceRef and v0.3.1 readiness/inventory verbatim.
+// Nothing here is persisted or promoted to canonical state (owner decision 2).
+
+/** State of one required .orbit/ document relative to the discovered evidence. */
+export type ProjectTruthDocState = "missing" | "partial" | "present";
+
+/** Suggested owner outcome per PRODUCT_SPEC. In v0.3.2 this is a SUGGESTION ONLY — never executed. */
+export type ProjectTruthDisposition = "create" | "merge" | "replace" | "skip" | "keep_existing";
+
+/** One drafted (or intentionally skipped) Project Truth document. */
+export interface ProjectTruthDraft {
+  /** Canonical .orbit/ path this draft targets, e.g. ".orbit/ARCHITECTURE.md". */
+  targetDoc: string;
+  docState: ProjectTruthDocState;
+  suggestedDisposition: ProjectTruthDisposition;
+  /** The generated proposal; null when the target was kept/skipped and nothing was generated. */
+  proposal: AiProposal | null;
+  /** Subset of the proposal's evidence whose ref resolved to a real inventory path (owner decision 3). */
+  verifiedEvidence: AiEvidenceRef[];
+  /** Owner-intent that cannot be inferred, plus any unverifiable citations downgraded from evidence. */
+  ownerInputNeeded: string[];
+}
+
+/** The ephemeral, non-canonical result of a bootstrap run. Not persisted. */
+export interface ProjectTruthBootstrapResult {
+  projectId: string;
+  ruleVersion: string;
+  readiness: ProjectTruthReadiness;
+  drafts: ProjectTruthDraft[];
+  /** Aggregated cross-cutting gaps the owner must supply. */
+  unresolvedInfo: string[];
+  provider: string | null;
+  model: string | null;
+  generatedAt: string;
+}
+
 export interface VaultRendererApi {
   snapshot(): Promise<ApiResult<VaultSnapshot>>;
   onChanged(callback: () => void): () => void;
@@ -486,6 +524,7 @@ export interface VaultRendererApi {
   };
   integrity: { analyze(projectId: string): Promise<ApiResult<IntegrityReport>> };
   context: { analyze(projectId: string): Promise<ApiResult<ProjectContextAnalysis>> };
+  projectTruth: { bootstrap(projectId: string): Promise<ApiResult<ProjectTruthBootstrapResult>> };
   backup: {
     create(): Promise<ApiResult<SnapshotSummary>>;
     list(): Promise<ApiResult<SnapshotSummary[]>>;

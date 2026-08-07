@@ -52,6 +52,7 @@ const vaultApi: VaultRendererApi = {
   },
   integrity: { analyze: (projectId) => call("vault:integrity:analyze", projectId) },
   context: { analyze: (projectId) => call("vault:context:analyze", projectId) },
+  projectTruth: { bootstrap: (projectId) => call("vault:project-truth:bootstrap", projectId) },
   backup: {
     create: () => call("vault:backup:create"),
     list: () => call("vault:backup:list"),
