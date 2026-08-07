@@ -201,4 +201,20 @@ for (const selector of [".context-view", ".context-readiness", ".context-invento
   assert.match(styles, new RegExp(selector.replace(/\./g, "\\.")), `Missing Project Context UI style: ${selector}`);
 }
 
+// --- v0.3.2 Project Truth Bootstrap contract (read-only, user-triggered) ---
+const projectTruth = read("apps/vault-desktop/renderer/src/ProjectTruthBootstrapView.tsx");
+requireContract(main, /handle\("vault:project-truth:bootstrap", projectId => vault\.projectTruth\.bootstrap\(projectId\)\);/, "project-truth bootstrap main handler (non-mutating, no mutates flag)");
+assert.doesNotMatch(main, /vault:project-truth:bootstrap"[^;]*, true\)/, "project-truth bootstrap must not be marked as mutating");
+requireContract(preload, /projectTruth: \{ bootstrap: \(projectId\) => call\("vault:project-truth:bootstrap", projectId\) \},/, "preload projectTruth.bootstrap bridge method");
+requireContract(types, /projectTruth: \{ bootstrap\(projectId: string\): Promise<ApiResult<ProjectTruthBootstrapResult>> \};/, "VaultRendererApi projectTruth contract");
+requireContract(projectTruth, /window\.vault\.projectTruth\.bootstrap\(/, "ProjectTruthBootstrapView must call window.vault.projectTruth.bootstrap");
+assert.doesNotMatch(projectTruth, /window\.vault\.(?!projectTruth\.bootstrap)\w+\.(create|update|approve|archive|restore|supersede|merge|attach|remove|trash|delete|reconcile)/, "ProjectTruthBootstrapView must remain read-only (no mutating vault calls)");
+requireContract(projectTruth, /Generate Project Truth drafts/, "ProjectTruthBootstrapView must expose an explicit generate trigger");
+assert.doesNotMatch(projectTruth, /useEffect\([^)]*\bbootstrap\b/, "ProjectTruthBootstrapView must not auto-run bootstrap on mount");
+requireContract(app, /view==="project-truth"/, "App must mount the Project Truth view");
+requireContract(app, /<ProjectTruthBootstrapView /, "App must render ProjectTruthBootstrapView");
+for (const selector of [".project-truth-view", ".project-truth-overlay"]) {
+  assert.match(styles, new RegExp(selector.replace(/\./g, "\\.")), `Missing Project Truth UI style: ${selector}`);
+}
+
 console.log("Lifecycle IPC/preload/UI regression checks passed.");
