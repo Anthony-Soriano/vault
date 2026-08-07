@@ -2,7 +2,7 @@
 
 > A local-first **Project Truth Engine** that turns a project's files, notes, code, and decisions into a compact, editable, transparent, evidence-backed context layer for humans and AI — fully owned on your machine.
 
-**Status:** `v0.3.0` — Phase 2 (manual knowledge system) and BL-03 (manual snapshot & restore) complete; **Phase 3 — AI + Project Truth Engine is active**, delivered incrementally as `v0.3.0` → `v0.3.5`. `v0.3.0` (AI Foundation) is complete: a provider-neutral, proposal-only AI service boundary exists internally in `packages/vault-core`, not yet wired to the UI. See [`.orbit/CURRENT_PHASE.md`](.orbit/CURRENT_PHASE.md).
+**Status:** `v0.3.0` — Phase 2 (manual knowledge system) and BL-03 (manual snapshot & restore) complete; **Phase 3 — AI + Project Truth Engine is active**, delivered incrementally as `v0.3.0` → `v0.3.5`. `v0.3.0` (AI Foundation) is complete: a provider-neutral, proposal-only AI service boundary exists internally in `packages/vault-core`, not yet wired to the UI. **The active slice is now `v0.3.1` — Project Context & Repository Analysis** (owner-approved 2026-08-06): deterministic, local-first evidence discovery, Project Truth readiness detection, and transparent context packaging — analysis only, no Project Truth generation and no canonical mutation (not yet implemented). See [`.orbit/CURRENT_PHASE.md`](.orbit/CURRENT_PHASE.md).
 
 **Product rule:** Documents are source material. Knowledge objects are interpretations. Evidence connects the two. Users stay in control — AI may propose, never silently mutate.
 
