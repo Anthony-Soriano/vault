@@ -1,9 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { SqliteVaultRepository } from "@orbit/vault-storage";
 import {
   planProjectTruthBootstrap, PROJECT_TRUTH_BOOTSTRAP_RULE_VERSION,
   classifyEvidence, detectProjectTruthReadiness, buildProjectContextPackage,
   mapBootstrapDrafts, ProjectTruthBootstrapService, AiService, StubAiProvider, AiProviderError,
+  VaultService,
 } from "@orbit/vault-core";
 import type { ProjectContextAnalysis, RawEvidenceFile } from "@orbit/vault-types";
 
@@ -157,4 +162,52 @@ test("ProjectTruthBootstrapService surfaces the FIRST provider failure as a type
 test("ProjectTruthBootstrapService holds no repository (structural)", () => {
   const svc = new ProjectTruthBootstrapService(new AiService(new StubAiProvider()));
   assert.equal((svc as unknown as { repository?: unknown }).repository, undefined);
+});
+
+// Mirror phase3-project-context.test.ts: the repo takes a StorageOptions object,
+// and createProject takes CreateProjectInput ({ name } + optional fields).
+const openRepo = (dir: string) => {
+  const repo = new SqliteVaultRepository({ vaultRoot: dir, developmentMode: true, developmentRoot: dir });
+  repo.initialize();
+  return repo;
+};
+
+test("VaultService.projectTruth.bootstrap returns AI_NOT_CONFIGURED when no AI is wired", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "orbit-ptb-"));
+  try {
+    const repo = openRepo(dir);
+    const project = repo.createProject({ name: "Alpha" });
+    const vault = new VaultService(repo); // no AI
+    const res = await vault.projectTruth.bootstrap(project.id);
+    assert.equal(res.ok, false);
+    if (!res.ok) assert.equal(res.error.code, "AI_NOT_CONFIGURED");
+    repo.close();
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("VaultService.projectTruth.bootstrap returns ephemeral drafts and writes nothing", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "orbit-ptb-"));
+  try {
+    const repo = openRepo(dir);
+    const project = repo.createProject({ name: "Alpha" });
+    const before = JSON.stringify(repo.snapshot());
+    const vault = new VaultService(repo, { ai: new ProjectTruthBootstrapService(new AiService(new StubAiProvider(), { now: fixedNow }), { now: fixedNow }) });
+    const res = await vault.projectTruth.bootstrap(project.id);
+    assert.ok(res.ok);
+    if (res.ok) assert.equal(res.value.projectId, project.id);
+    assert.equal(JSON.stringify(repo.snapshot()), before); // no mutation
+    repo.close();
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("VaultService.projectTruth.bootstrap rejects an invalid id", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "orbit-ptb-"));
+  try {
+    const repo = openRepo(dir);
+    const vault = new VaultService(repo, { ai: new ProjectTruthBootstrapService(new AiService(new StubAiProvider())) });
+    const res = await vault.projectTruth.bootstrap("../etc/passwd");
+    assert.equal(res.ok, false);
+    if (!res.ok) assert.equal(res.error.code, "AI_VALIDATION_ERROR");
+    repo.close();
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

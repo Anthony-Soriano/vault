@@ -113,7 +113,11 @@ export interface VaultRepository extends ProjectRepository, FolderRepository, Do
 
 export class VaultService {
   private readonly repository: VaultRepository;
-  constructor(repository: VaultRepository) { this.repository = repository; }
+  private readonly ai: ProjectTruthBootstrapService | null;
+  constructor(repository: VaultRepository, options?: { ai?: ProjectTruthBootstrapService }) {
+    this.repository = repository;
+    this.ai = options?.ai ?? null;
+  }
   initialize() { this.repository.initialize(); }
   close() { this.repository.close(); }
   snapshot() { return this.repository.snapshot(); }
@@ -175,6 +179,15 @@ export class VaultService {
   context = {
     analyze: (projectId: string) => this.repository.analyzeProjectContext(assertIdentifier(projectId, "projectId")),
   };
+  projectTruth = { bootstrap: (projectId: string) => this.#bootstrapProjectTruth(projectId) };
+  async #bootstrapProjectTruth(projectId: string): Promise<AiResult<ProjectTruthBootstrapResult>> {
+    let id: string;
+    try { id = assertIdentifier(projectId, "projectId"); }
+    catch (error) { return { ok: false, error: { code: "AI_VALIDATION_ERROR", message: error instanceof Error ? error.message : "Invalid projectId." } }; }
+    if (!this.ai) return { ok: false, error: { code: "AI_NOT_CONFIGURED", message: "No AI provider is configured." } };
+    const analysis = this.repository.analyzeProjectContext(id); // read-only (v0.3.1)
+    return this.ai.bootstrap(analysis);
+  }
   backup = {
     create: (options: CreateSnapshotOptions) => this.repository.createSnapshot(options),
     list: () => this.repository.listSnapshots(),
