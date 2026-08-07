@@ -211,3 +211,11 @@ test("VaultService.projectTruth.bootstrap rejects an invalid id", async () => {
     repo.close();
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test("VaultService.projectTruth.bootstrap returns a typed error when context analysis throws (no unhandled rejection)", async () => {
+  const throwingRepo = { analyzeProjectContext() { throw new Error("context failed"); } } as unknown as Parameters<typeof VaultService.prototype.constructor>[0];
+  const vault = new VaultService(throwingRepo as any, { ai: new ProjectTruthBootstrapService(new AiService(new StubAiProvider())) });
+  const res = await vault.projectTruth.bootstrap("valid-project-id");
+  assert.equal(res.ok, false);
+  if (!res.ok) assert.equal(res.error.code, "AI_VALIDATION_ERROR");
+});

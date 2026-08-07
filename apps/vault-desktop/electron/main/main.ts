@@ -94,7 +94,7 @@ const registerVaultIpc = () => {
   handle("vault:relationships:list", filters => vault.relationships.list(filters)); handle("vault:relationships:create", input => vault.relationships.create(input), true); handle("vault:relationships:remove", id => vault.relationships.remove(id), true);
   handle("vault:integrity:analyze", projectId => vault.integrity.analyze(projectId));
   handle("vault:context:analyze", projectId => vault.context.analyze(projectId));
-  handle("vault:project-truth:bootstrap", projectId => vault.projectTruth.bootstrap(projectId));
+  ipcMain.handle("vault:project-truth:bootstrap", (_event, projectId: string) => vault.projectTruth.bootstrap(projectId));
   handle("vault:backup:create", () => withWriteBarrier(() => vault.backup.create({ appVersion: app.getVersion() })), true);
   handle("vault:backup:list", () => vault.backup.list());
   handle("vault:backup:inspect", (snapshotId: string) => vault.backup.inspect(snapshotId));

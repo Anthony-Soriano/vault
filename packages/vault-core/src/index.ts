@@ -185,7 +185,9 @@ export class VaultService {
     try { id = assertIdentifier(projectId, "projectId"); }
     catch (error) { return { ok: false, error: { code: "AI_VALIDATION_ERROR", message: error instanceof Error ? error.message : "Invalid projectId." } }; }
     if (!this.ai) return { ok: false, error: { code: "AI_NOT_CONFIGURED", message: "No AI provider is configured." } };
-    const analysis = this.repository.analyzeProjectContext(id); // read-only (v0.3.1)
+    let analysis: ProjectContextAnalysis;
+    try { analysis = this.repository.analyzeProjectContext(id); } // read-only (v0.3.1)
+    catch (error) { return { ok: false, error: { code: "AI_VALIDATION_ERROR", message: error instanceof Error ? error.message : "Project context could not be analyzed." } }; }
     return this.ai.bootstrap(analysis);
   }
   backup = {

@@ -203,7 +203,8 @@ for (const selector of [".context-view", ".context-readiness", ".context-invento
 
 // --- v0.3.2 Project Truth Bootstrap contract (read-only, user-triggered) ---
 const projectTruth = read("apps/vault-desktop/renderer/src/ProjectTruthBootstrapView.tsx");
-requireContract(main, /handle\("vault:project-truth:bootstrap", projectId => vault\.projectTruth\.bootstrap\(projectId\)\);/, "project-truth bootstrap main handler (non-mutating, no mutates flag)");
+requireContract(main, /ipcMain\.handle\("vault:project-truth:bootstrap", \(_event, projectId: string\) => vault\.projectTruth\.bootstrap\(projectId\)\);/, "project-truth bootstrap main handler (async, direct ipcMain.handle)");
+assert.doesNotMatch(main, /(?<!ipcMain\.)\bhandle\("vault:project-truth:bootstrap"/, "async project-truth bootstrap must NOT use the synchronous handle() helper (DataCloneError)");
 assert.doesNotMatch(main, /vault:project-truth:bootstrap"[^;]*, true\)/, "project-truth bootstrap must not be marked as mutating");
 requireContract(preload, /projectTruth: \{ bootstrap: \(projectId\) => call\("vault:project-truth:bootstrap", projectId\) \},/, "preload projectTruth.bootstrap bridge method");
 requireContract(types, /projectTruth: \{ bootstrap\(projectId: string\): Promise<ApiResult<ProjectTruthBootstrapResult>> \};/, "VaultRendererApi projectTruth contract");
