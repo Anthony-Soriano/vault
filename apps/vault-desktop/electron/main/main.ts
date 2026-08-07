@@ -2,7 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from "electron";
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, watch, writeFileSync, type FSWatcher } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { VaultDomainError, VaultService } from "@orbit/vault-core";
+import { VaultDomainError, VaultService, AiService, StubAiProvider, ProjectTruthBootstrapService } from "@orbit/vault-core";
 import { SqliteVaultRepository } from "@orbit/vault-storage";
 import type { ApiResult, VaultApiError, VaultDescriptor, VaultLifecycleState } from "@orbit/vault-types";
 
@@ -16,6 +16,8 @@ let registryPath = "";
 let developmentRoot = "";
 let projectsWatcher:FSWatcher|null=null;
 let reconcileTimer:NodeJS.Timeout|null=null;
+const buildVault = (repo: SqliteVaultRepository) =>
+  new VaultService(repo, { ai: new ProjectTruthBootstrapService(new AiService(new StubAiProvider())) });
 const reconcileOnOpen=(service:VaultService)=>{try{service.filesystem.reconcile();}catch(error){console.warn("Vault filesystem reconciliation could not complete",error);}};
 
 const notifyChanged = () => mainWindow?.webContents.send("vault:changed");
@@ -50,7 +52,7 @@ const activateVault = async (path: string) => {
   const normalized = resolve(path);
   if (!existsSync(join(normalized, "vault.db"))) throw new VaultDomainError("VALIDATION_ERROR", "This folder is not an Orbit Vault. Choose a folder containing vault.db.");
   if (activeVault && resolve(activeVault.path) === normalized) return;
-  const next = new VaultService(new SqliteVaultRepository({ vaultRoot: normalized, developmentMode: isDevelopment, developmentRoot }));
+  const next = buildVault(new SqliteVaultRepository({ vaultRoot: normalized, developmentMode: isDevelopment, developmentRoot }));
   next.initialize();reconcileOnOpen(next); vault?.close(); vault = next; rememberVault(normalized);startProjectsWatcher();updateWindowForVault();
 };
 const chooseVaultDirectory = async (title: string) => {
@@ -61,10 +63,10 @@ const chooseVaultDirectory = async (title: string) => {
 const createVault = async (): Promise<VaultLifecycleState | null> => {
   const path = await chooseVaultDirectory("Create an Orbit Vault in an empty folder"); if (!path) return null;
   if (readdirSync(path).length > 0) throw new VaultDomainError("VALIDATION_ERROR", "Create Vault requires an empty folder.");
-  const next = new VaultService(new SqliteVaultRepository({ vaultRoot: resolve(path), developmentMode: isDevelopment, developmentRoot }));
+  const next = buildVault(new SqliteVaultRepository({ vaultRoot: resolve(path), developmentMode: isDevelopment, developmentRoot }));
   next.initialize();reconcileOnOpen(next); vault?.close(); vault = next; rememberVault(path);startProjectsWatcher();updateWindowForVault(); return lifecycleState();
 };
-const initializeVaultAt = (path:string) => { const next=new VaultService(new SqliteVaultRepository({vaultRoot:resolve(path),developmentMode:isDevelopment,developmentRoot})); next.initialize();reconcileOnOpen(next); vault?.close(); vault=next; rememberVault(path);startProjectsWatcher();updateWindowForVault(); return lifecycleState(); };
+const initializeVaultAt = (path:string) => { const next=buildVault(new SqliteVaultRepository({vaultRoot:resolve(path),developmentMode:isDevelopment,developmentRoot})); next.initialize();reconcileOnOpen(next); vault?.close(); vault=next; rememberVault(path);startProjectsWatcher();updateWindowForVault(); return lifecycleState(); };
 const openVault = async (): Promise<VaultLifecycleState | null> => {
   const path=await chooseVaultDirectory("Open an Orbit Vault");if(!path)return null;
   if(existsSync(join(path,"vault.db"))){await activateVault(path);return lifecycleState();}
@@ -92,6 +94,7 @@ const registerVaultIpc = () => {
   handle("vault:relationships:list", filters => vault.relationships.list(filters)); handle("vault:relationships:create", input => vault.relationships.create(input), true); handle("vault:relationships:remove", id => vault.relationships.remove(id), true);
   handle("vault:integrity:analyze", projectId => vault.integrity.analyze(projectId));
   handle("vault:context:analyze", projectId => vault.context.analyze(projectId));
+  handle("vault:project-truth:bootstrap", projectId => vault.projectTruth.bootstrap(projectId));
   handle("vault:backup:create", () => withWriteBarrier(() => vault.backup.create({ appVersion: app.getVersion() })), true);
   handle("vault:backup:list", () => vault.backup.list());
   handle("vault:backup:inspect", (snapshotId: string) => vault.backup.inspect(snapshotId));
@@ -131,7 +134,7 @@ app.whenReady().then(async () => {
   developmentRoot = join(app.getPath("userData"), "orbit-vault", "development-vault"); registryPath = join(app.getPath("userData"), "orbit-vault", "vaults.json");
   const legacyRoot = join(app.getPath("userData"), "orbit-vault", isDevelopment ? "development-vault" : "vault"); let vaultRoot = legacyRoot;
   if (existsSync(registryPath)) try { const stored = JSON.parse(readFileSync(registryPath, "utf8")) as { activePath?: string; recent?: VaultDescriptor[] }; if (stored.activePath && existsSync(join(stored.activePath, "vault.db"))) vaultRoot = stored.activePath; recentVaults = (stored.recent ?? []).filter(item => existsSync(join(item.path, "vault.db"))); } catch (error) { console.warn("Could not read Vault registry", error); }
-  vault = new VaultService(new SqliteVaultRepository({ vaultRoot, developmentMode: isDevelopment, developmentRoot })); vault.initialize();reconcileOnOpen(vault); rememberVault(vaultRoot);startProjectsWatcher();registerVaultIpc();
+  vault = buildVault(new SqliteVaultRepository({ vaultRoot, developmentMode: isDevelopment, developmentRoot })); vault.initialize();reconcileOnOpen(vault); rememberVault(vaultRoot);startProjectsWatcher();registerVaultIpc();
   ipcMain.handle("desktop:get-info", () => ({ platform: process.platform, version: app.getVersion(), development: isDevelopment })); ipcMain.handle("dialog:open-files", openFileDialog);
   Menu.setApplicationMenu(createMenu()); await createWindow(); app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) void createWindow(); });
 });
