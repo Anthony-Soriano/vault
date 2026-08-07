@@ -1,14 +1,14 @@
 ARCHITECTURE.md
 Only verified technical reality:
 
-(Reflects code at `main`: the `v0.2.0` baseline plus the completed BL-03 recovery/backup work. State only what exists — Rule 5.)
+(Reflects code at `main`: the `v0.2.0` baseline, the completed BL-03 recovery/backup work, and the Phase 3 `v0.3.0` AI Foundation layer. State only what exists — Rule 5.)
 
 ## Packages
 
 pnpm monorepo (`pnpm-workspace.yaml`), Node ≥ 22.13, pnpm 11.9.0.
 
-- `packages/vault-types` — shared types + the `VaultRendererApi` IPC contract (single wire source of truth).
-- `packages/vault-core` — validation, use-case service (`VaultService`), repository interfaces, and pure analyzers (incl. `analyzeKnowledgeIntegrity`).
+- `packages/vault-types` — shared types + the `VaultRendererApi` IPC contract (single wire source of truth). Also holds the Phase 3 `v0.3.0` AI contracts (proposal/provenance/context/request-response, provider config, `AiResult`/`AiError`).
+- `packages/vault-core` — validation, use-case service (`VaultService`), repository interfaces, pure analyzers (incl. `analyzeKnowledgeIntegrity`), and the Phase 3 `v0.3.0` AI Foundation layer (`AiService`, `AiModelProvider`, `StubAiProvider`, `AiProviderError`, `createAiContextPackage`).
 - `packages/vault-storage` — `SqliteVaultRepository`: SQLite migrations, local-file operations, search, reconciliation, knowledge/evidence/relationship/history/merge persistence, integrity assembly, and snapshot/restore (backup) with fingerprint/checksum/manifest helpers.
 - `apps/vault-desktop` — Electron shell (`electron/main`, `electron/preload`) + React/Vite renderer (`renderer/`).
 
@@ -78,9 +78,20 @@ Registered in `electron/main/main.ts` via a `handle(channel, op, mutates=false)`
 - Project isolation is enforced: cross-project relationships and evidence are rejected.
 - The future Orbit assistant must use the Vault service API, never `vault.db` directly.
 
+## AI layer (Phase 3 — v0.3.0 AI Foundation)
+
+A provider-neutral, proposal-only AI layer exists in `packages/vault-core`, with its typed contracts in `packages/vault-types`. It is pure (no Node/SQLite/fs, no vendor SDK) and dependency-injected.
+
+- **`AiModelProvider`** — the provider-neutral backend interface (`id`, `model`, `generate(AiProviderRequest) → Promise<AiProviderRawResponse>`). Swapping providers requires no change to the contracts or the service. `StubAiProvider` is a deterministic in-process implementation used by tests and the verification gate; no vendor is baked in.
+- **`AiService`** — the project-scoped service boundary. `propose(AiProposalRequest)` validates the request, sends an explicitly constructed `AiContextPackage` to the injected provider, and returns structured, non-canonical `AiProposal`s wrapped in `AiResult`. It holds **no repository reference**, so it structurally cannot read or write `vault.db`.
+- **Trust invariants enforced in code:** every returned proposal has `status: "proposed"` (never canonical); each proposal must carry provenance — cited `evidence` or an explicit `inferred` flag, else the response is rejected `AI_RESPONSE_INVALID`; each proposal's `projectId` is stamped from the request, and context from another project is rejected `AI_PROJECT_ISOLATION`; provider failures are returned as typed `AI_PROVIDER_ERROR` / `AI_TRANSPORT_ERROR` and never mutate state or throw to the caller. Ids are deterministic for a fixed clock.
+- **Not yet present (later Phase 3 slices):** no wiring into `VaultService`, IPC, preload, or the renderer; no repository/repository-file discovery or analysis (`v0.3.1`); no Project Truth generation (`v0.3.2`); no review/approval UI (`v0.3.3`); no live vendor provider. This layer is internal plumbing only.
+
+This does not alter the existing architectural invariants: the renderer is untouched, no IPC channel was added, and no path promotes a proposal to canonical state.
+
 ## Testing
 
-Node's built-in runner: `node --experimental-strip-types --test tests/*.test.ts`. Suites: `phase1-storage`, `phase2-knowledge`, `phase2-integrity`, `graph-v2`, `backup` — **70 tests** (49 at v0.2.0 + 21 for BL-03 backup/restore). Static UI/IPC contract check: `node scripts/phase2-lifecycle-ui-regression.mjs` (now also asserts the `vault:backup:*` contract). Scripts run via `corepack pnpm <script>` (no global pnpm required). Type + build gates: `pnpm typecheck`, `pnpm build`. UI interaction is verified manually (the Electron window is not auto-driven).
+Node's built-in runner: `node --experimental-strip-types --test tests/*.test.ts`. Suites: `phase1-storage`, `phase2-knowledge`, `phase2-integrity`, `graph-v2`, `backup`, `phase3-ai-foundation` — **85 tests** (49 at v0.2.0 + 21 for BL-03 backup/restore + 15 for the v0.3.0 AI layer). Static UI/IPC contract check: `node scripts/phase2-lifecycle-ui-regression.mjs` (now also asserts the `vault:backup:*` contract). Scripts run via `corepack pnpm <script>` (no global pnpm required). Type + build gates: `pnpm typecheck`, `pnpm build`. UI interaction is verified manually (the Electron window is not auto-driven).
 
 ## Architectural invariants
 

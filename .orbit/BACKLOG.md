@@ -52,21 +52,28 @@ Packaging config exists (`electron-builder.yml`, win/nsis, `Orbit-Vault-${versio
 
 **Phase 1.2 / 1.3 disposition:** implemented portions are complete (file import, attachments via Document/File, reveal/open, external change detection); the items above capture everything deferred. With this backlog recorded, Phase 1.2 and 1.3 can be treated as **closed, remainder tracked here** — no silent gaps.
 
-## Project Truth Engine capabilities (newly recognized)
+## Project Truth Engine capabilities
 
-Separate from BL-01…BL-08 (which came from the Phase 1.2/1.3 reconciliation audit). These capture the clarified **Project Truth Engine** product concept. All are **deferred and not approved implementation scope**; priorities are intentionally unassigned until the owner approves them. They must be considered during the owner-approved Phase 3 brainstorm/spec (see `.orbit/CURRENT_PHASE.md`).
+Separate from BL-01…BL-08 (which came from the Phase 1.2/1.3 reconciliation audit). These capture the clarified **Project Truth Engine** product concept.
+
+**Disposition update (2026-08-06):** with the owner approving Phase 3 and its `v0.3.0`→`v0.3.5` slices (see `.orbit/ROADMAP.md`, `.orbit/DECISIONS.md`), PC-01…PC-04 have **formally entered the Phase 3 roadmap** and are no longer unplanned — each now maps to a planned slice below. They are still **not active implementation scope**: only the slice named active in `.orbit/CURRENT_PHASE.md` is approved for implementation (currently none — `v0.3.0` is complete). PC-05 remains **deferred** unless an active Phase 3 slice specifically needs it. History retained below.
 
 ### PC-01 — Project Truth readiness scan
 Detect whether a project has a complete, partial, missing, stale, duplicated, or conflicting Project Truth stack.
+- **Disposition:** planned — enters Phase 3 at **`v0.3.1`** (readiness/completeness detection) and is exercised by **`v0.3.2`** (bootstrap) and **`v0.3.5`** (staleness/maintenance). Not active scope yet.
 
 ### PC-02 — Evidence-backed Project Truth bootstrap
 Analyze repository evidence and generate drafts for missing Project Truth documents, while clearly separating inferred technical facts from owner-supplied intent.
+- **Disposition:** planned — Phase 3 **`v0.3.2`** (Project Truth Bootstrap), building on the `v0.3.0` proposal pipeline and `v0.3.1` context analysis. Not active scope yet.
 
 ### PC-03 — Project Truth change proposals
 Observe meaningful project changes and propose updates to affected Project Truth documents with evidence and diffs.
+- **Disposition:** planned — Phase 3 **`v0.3.5`** (Project Truth Maintenance), reviewed through the `v0.3.3` approval gate. Not active scope yet.
 
 ### PC-04 — Context package for external AI tools
 Expose a compact, controlled Project Truth/context package that Claude, Codex, Cursor, GPT, local models, and future Orbit tools can consume before deeper file inspection.
+- **Disposition:** planned — foundations in Phase 3 **`v0.3.1`** (transparent context packages); a stable externally-consumable API surface is Phase 6 (Stable Vault API). Not active scope yet.
 
 ### PC-05 — Context efficiency measurement
 Measure whether Vault reduces files read, input tokens, repeated repository analysis, orientation time, and unnecessary model cost compared with working without Vault.
+- **Disposition:** **deferred** — not tied to a specific Phase 3 slice. Pull in only if an active slice specifically needs it, with owner approval and an entry in `.orbit/CURRENT_PHASE.md`.

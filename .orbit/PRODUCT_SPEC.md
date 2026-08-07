@@ -65,7 +65,7 @@ Expected benefits (directional; not promised as specific figures until measurabl
 
 **Implemented (v0.2.0):** Vault CRUD & multi-Vault isolation; project/folder/document CRUD; Markdown autosave; general file import; native open/reveal; archive/trash/restore; lexical search; filesystem reconciliation + watcher; knowledge objects; evidence; typed relationships/backlinks; folder assignment; Atlas with overlays; immutable knowledge history; supersede; transactional deterministic merge; deterministic integrity analysis + review panel.
 
-**Planned (see `.orbit/ROADMAP.md`):** AI proposal pipeline (Phase 3); derived Project DNA (Phase 4); semantic drift detection (Phase 5); stable public API (Phase 6). Deferred robustness items in `.orbit/BACKLOG.md`.
+**Planned (see `.orbit/ROADMAP.md`):** AI + Project Truth Engine (Phase 3, active — delivered incrementally as `v0.3.0` AI Foundation → `v0.3.1` Project Context & Repository Analysis → `v0.3.2` Project Truth Bootstrap → `v0.3.3` AI Proposal Review & Approval → `v0.3.4` Knowledge Proposal Engine → `v0.3.5` Project Truth Maintenance); derived Project DNA (Phase 4); semantic drift detection (Phase 5); stable public API (Phase 6). `v0.3.0` is complete (internal AI plumbing; see `.orbit/ARCHITECTURE.md`); only the slice named active in `.orbit/CURRENT_PHASE.md` is approved implementation scope. Deferred robustness items in `.orbit/BACKLOG.md`.
 
 ## V1 boundaries
 
@@ -95,7 +95,20 @@ State lives in a user-chosen Vault directory (`vault.db` + `projects/` + `backup
 
 ## AI behavior
 
-None today. When introduced (Phase 3), AI only **proposes**: it generates candidate knowledge with citations, which the user approves/edits/merges/rejects. AI never writes canonical state directly and never reads `vault.db` outside the stable service boundary. Semantic judgment (e.g., "these contradict") stays out of the deterministic layers.
+No user-facing AI behavior today. As of `v0.3.0` a provider-neutral, proposal-only AI service boundary exists internally (see `.orbit/ARCHITECTURE.md`), but it is not wired to the UI/IPC and performs no repository analysis or Project Truth generation. When surfaced in later Phase 3 slices, AI only **proposes**: it generates candidate knowledge with citations, which the user approves/edits/merges/rejects. AI never writes canonical state directly and never reads `vault.db` outside the stable service boundary. Semantic judgment (e.g., "these contradict") stays out of the deterministic layers and is always clearly identified as AI-generated judgment, never presented as deterministic truth.
+
+### How the Phase 3 AI capabilities relate
+
+Phase 3 introduces one shared AI proposal layer that several capabilities build on. They compose rather than compete:
+
+- **AI proposal pipeline (foundation, `v0.3.0`, complete).** The provider-neutral plumbing: send an explicitly constructed context to a model, receive a structured, provenance-carrying, non-canonical proposal. Every capability below is a producer or consumer of proposals on this pipeline.
+- **Project context & repository analysis (`v0.3.1`).** Deterministic, local-first discovery and packaging of project evidence into transparent, inspectable context. It feeds the pipeline; it does not itself write anything canonical.
+- **Project Truth Bootstrap (`v0.3.2`).** Uses the pipeline + packaged evidence to draft *missing* Project Truth for the none/partial/existing states, separating inferred technical facts from owner-intent that cannot be inferred. It emits proposals, never authoritative files.
+- **AI proposal review & approval (`v0.3.3`).** The human-in-the-loop gate through which any proposal — Project Truth or knowledge — is inspected, compared, edited, and approved/rejected/merged/replaced with preserved history. This is the only path by which an AI proposal becomes canonical.
+- **Knowledge proposal engine (`v0.3.4`).** Turns project evidence/context into candidate canonical Knowledge Objects across the existing types (fact, decision, goal, question, idea, preference), reusing the same pipeline, review gate, and the existing lifecycle/history/integrity rules.
+- **Project Truth maintenance (`v0.3.5`).** Detects meaningful project change, judges which Project Truth domains may be stale, and emits evidence-backed *update* proposals through the same review gate — change proposals, never silent edits.
+
+Invariant across all of them: nothing AI-generated becomes canonical without an explicit user action, and every AI-generated object carries provenance.
 
 ## Acceptance criteria
 

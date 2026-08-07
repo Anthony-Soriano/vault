@@ -238,6 +238,131 @@ export interface CreateSnapshotOptions { appVersion: string }
 export interface RestoreSnapshotInput { snapshotId: string; parentPath: string; folderName: string }
 export interface RestoreResult { vaultId: string; targetPath: string }
 
+// --- Phase 3 / v0.3.0 — AI Foundation contracts ---
+// Provider-neutral, proposal-only AI plumbing. Nothing here becomes canonical:
+// every proposal is non-canonical until an explicit user action promotes it
+// (owner-approved decisions, .orbit/DECISIONS.md). The AI layer never accesses
+// vault.db directly — it only exchanges these typed structures.
+
+/** Categories of thing a proposal targets. Later Phase 3 slices produce these; v0.3.0 only defines the contract. */
+export type AiProposalKind = "knowledge" | "project_truth" | "other";
+/** Where a piece of provenance points. `model_inference` marks content the model inferred rather than read from a cited source. */
+export type AiProvenanceKind = "repository_file" | "document" | "knowledge" | "evidence" | "manual_note" | "model_inference";
+/** A single provenance pointer behind a generated claim. */
+export interface AiEvidenceRef {
+  kind: AiProvenanceKind;
+  /** Id or path of the supporting source; null for pure model inference. */
+  ref: string | null;
+  /** Line range, section, or other in-source locator; null if not applicable. */
+  locator: string | null;
+  /** Short supporting excerpt; null if none. */
+  excerpt: string | null;
+}
+/** Provenance carried by every model-generated proposal. */
+export interface AiProvenance {
+  /** Provider id that produced the proposal. */
+  provider: string;
+  /** Model identifier if known. */
+  model: string | null;
+  /** ISO timestamp of generation. */
+  generatedAt: string;
+  /** Cited supporting evidence. May be empty only when `inferred` is true. */
+  evidence: AiEvidenceRef[];
+  /** True when the proposal is model inference beyond cited evidence (e.g. owner-intent that cannot be read from the repository). */
+  inferred: boolean;
+}
+
+/** Kinds of item that can appear in an explicitly constructed context package. */
+export type AiContextItemKind = "instruction" | "project_truth" | "document" | "knowledge" | "evidence" | "repository_file" | "note";
+/** One inspectable unit of context supplied to a model. */
+export interface AiContextItem {
+  id: string;
+  kind: AiContextItemKind;
+  label: string;
+  content: string;
+  /** Id/path this content came from, retained so context stays inspectable and traceable; null for synthetic instructions. */
+  sourceRef: string | null;
+}
+/** A transparent, inspectable bundle of context supplied to a model for one request. */
+export interface AiContextPackage {
+  projectId: string;
+  /** Human-readable reason this context was assembled. */
+  purpose: string;
+  items: AiContextItem[];
+  createdAt: string;
+}
+
+/** A generated proposal is always non-canonical at generation time. */
+export type AiProposalStatus = "proposed";
+/** A normalized, provenance-carrying, non-canonical proposal returned to callers. */
+export interface AiProposal {
+  id: string;
+  projectId: string;
+  kind: AiProposalKind;
+  title: string;
+  body: string;
+  /** Always "proposed" — nothing AI-generated is canonical until an explicit user action. */
+  status: AiProposalStatus;
+  provenance: AiProvenance;
+  createdAt: string;
+}
+
+/** A request to generate structured proposals from an explicitly constructed context. */
+export interface AiProposalRequest {
+  projectId: string;
+  purpose: string;
+  context: AiContextPackage;
+  desiredKind: AiProposalKind;
+  instructions?: string;
+}
+/** The structured, non-canonical result of a proposal request. */
+export interface AiProposalResponse {
+  requestId: string;
+  projectId: string;
+  proposals: AiProposal[];
+  provider: string;
+  model: string | null;
+  createdAt: string;
+}
+
+/** Provider-neutral configuration for selecting/configuring a model backend. No vendor is baked in. */
+export interface AiProviderConfig {
+  /** Provider id, e.g. "stub"; later "ollama" or another backend. */
+  provider: string;
+  model: string | null;
+  endpoint: string | null;
+  options: Record<string, string | number | boolean>;
+}
+
+export type AiErrorCode =
+  | "AI_VALIDATION_ERROR" | "AI_NOT_CONFIGURED" | "AI_PROVIDER_ERROR"
+  | "AI_TRANSPORT_ERROR" | "AI_RESPONSE_INVALID" | "AI_PROJECT_ISOLATION";
+export interface AiError { code: AiErrorCode; message: string; provider?: string }
+export type AiResult<T> = { ok: true; value: T } | { ok: false; error: AiError };
+
+/** The low-level request a provider receives. The service builds this from an AiProposalRequest after validation. */
+export interface AiProviderRequest {
+  projectId: string;
+  purpose: string;
+  instructions: string | null;
+  context: AiContextPackage;
+  desiredKind: AiProposalKind;
+}
+/** A raw proposal as returned by a provider, before the service normalizes and enforces trust invariants. */
+export interface AiRawProposal {
+  kind: AiProposalKind;
+  title: string;
+  body: string;
+  evidence: AiEvidenceRef[];
+  /** True when the content is model inference beyond cited evidence. */
+  inferred: boolean;
+}
+/** The raw response a provider returns for one request. */
+export interface AiProviderRawResponse {
+  model: string | null;
+  proposals: AiRawProposal[];
+}
+
 export interface VaultRendererApi {
   snapshot(): Promise<ApiResult<VaultSnapshot>>;
   onChanged(callback: () => void): () => void;

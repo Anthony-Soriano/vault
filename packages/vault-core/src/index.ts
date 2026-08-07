@@ -5,6 +5,11 @@ import type {
   IntegrityAnalyzerInput, IntegrityFinding, IntegrityFindingKind, IntegrityReport, IntegritySeverity,
   CreateSnapshotOptions, RestoreResult, RestoreSnapshotInput, SnapshotInspection, SnapshotSummary,
 } from "@orbit/vault-types";
+import type {
+  AiContextItem, AiContextPackage, AiErrorCode, AiEvidenceRef, AiProposal, AiProposalKind,
+  AiProposalRequest, AiProposalResponse, AiProvenanceKind, AiProviderRawResponse, AiProviderRequest,
+  AiRawProposal, AiResult, AiContextItemKind,
+} from "@orbit/vault-types";
 
 export class VaultDomainError extends Error {
   readonly code: "VALIDATION_ERROR" | "NOT_FOUND" | "DUPLICATE" | "INVALID_MOVE";
@@ -315,4 +320,221 @@ export function analyzeKnowledgeIntegrity(input: IntegrityAnalyzerInput): Integr
   for (const f of findings) countsByKind[f.kind]++;
   const errorCount = findings.filter(f => f.severity === "error").length;
   return { projectId, findings, totalCount: findings.length, errorCount, warningCount: findings.length - errorCount, countsByKind };
+}
+
+// --- Phase 3 / v0.3.0 — AI Foundation (provider-neutral, proposal-only) ---
+//
+// A pure, dependency-injected AI layer. It exchanges only the typed AI contracts
+// in @orbit/vault-types; it holds no repository reference, so it structurally
+// cannot read or write vault.db. Trust invariants enforced here (see
+// .orbit/DECISIONS.md): AI only proposes (every proposal is non-canonical),
+// every proposal carries provenance (cited evidence or an explicit inference
+// flag), project context is isolated, and provider failures never mutate state.
+
+export const AI_FOUNDATION_VERSION = "0.3.0";
+
+const AI_PROPOSAL_KINDS: readonly AiProposalKind[] = ["knowledge", "project_truth", "other"];
+const AI_PROVENANCE_KINDS: readonly AiProvenanceKind[] = ["repository_file", "document", "knowledge", "evidence", "manual_note", "model_inference"];
+const AI_TITLE_MAX = 200;
+const AI_BODY_MAX = 20000;
+
+const nowIso = () => new Date().toISOString();
+
+/** Deterministic 32-bit FNV-1a hash -> base36. Keeps request/proposal ids stable for a fixed clock. */
+const stableHash = (input: string): string => {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) { h ^= input.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+  return (h >>> 0).toString(36);
+};
+
+const isProposalKind = (value: unknown): value is AiProposalKind =>
+  typeof value === "string" && AI_PROPOSAL_KINDS.includes(value as AiProposalKind);
+
+const contextKindToProvenance = (kind: AiContextItemKind): AiProvenanceKind => {
+  switch (kind) {
+    case "document": return "document";
+    case "knowledge": return "knowledge";
+    case "evidence": return "evidence";
+    case "repository_file": return "repository_file";
+    case "project_truth": return "document";
+    default: return "manual_note";
+  }
+};
+
+/** Thrown by a normalization step when a provider response violates a trust invariant. Never escapes AiService. */
+class AiInvalidResponse extends Error {}
+
+/**
+ * Error a provider may throw to signal a failure. `transport: true` distinguishes
+ * network/transport failures (AI_TRANSPORT_ERROR) from provider-side failures (AI_PROVIDER_ERROR).
+ */
+export class AiProviderError extends Error {
+  readonly transport: boolean;
+  constructor(message: string, options?: { transport?: boolean }) {
+    super(message);
+    this.name = "AiProviderError";
+    this.transport = options?.transport ?? false;
+  }
+}
+
+/** Provider-neutral model backend. Swapping providers requires no change to the contracts or the service. */
+export interface AiModelProvider {
+  readonly id: string;
+  readonly model: string | null;
+  generate(request: AiProviderRequest): Promise<AiProviderRawResponse>;
+}
+
+/** Build an inspectable, project-scoped context package for a request. */
+export function createAiContextPackage(input: {
+  projectId: string; purpose: string; items?: AiContextItem[]; now?: () => string;
+}): AiContextPackage {
+  return {
+    projectId: input.projectId,
+    purpose: input.purpose,
+    items: input.items ? [...input.items] : [],
+    createdAt: (input.now ?? nowIso)(),
+  };
+}
+
+/**
+ * Deterministic in-process provider for tests and the verification gate. It requires
+ * no vendor SDK or network, so the send-context/receive-proposal path is exercisable
+ * end-to-end without locking the product to any provider.
+ */
+export class StubAiProvider implements AiModelProvider {
+  readonly id = "stub";
+  readonly model: string | null;
+  constructor(options?: { model?: string | null }) {
+    this.model = options && "model" in options ? options.model ?? null : "stub-1";
+  }
+  async generate(request: AiProviderRequest): Promise<AiProviderRawResponse> {
+    const cited = request.context.items.filter(i => i.sourceRef);
+    const hasEvidence = cited.length > 0;
+    const evidence: AiEvidenceRef[] = hasEvidence
+      ? cited.map(i => ({ kind: contextKindToProvenance(i.kind), ref: i.sourceRef, locator: null, excerpt: i.content.slice(0, 160) || null }))
+      : [];
+    const proposal: AiRawProposal = {
+      kind: request.desiredKind,
+      title: `Proposed ${request.desiredKind} for ${request.projectId}`,
+      body: `Purpose: ${request.purpose}. Reviewed ${request.context.items.length} context item(s).`,
+      evidence,
+      inferred: !hasEvidence,
+    };
+    return { model: this.model, proposals: [proposal] };
+  }
+}
+
+const aiErr = (code: AiErrorCode, message: string, provider?: string): AiResult<never> =>
+  ({ ok: false, error: provider ? { code, message, provider } : { code, message } });
+
+const requireAiText = (value: unknown, field: string): string => {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (!text) throw new VaultDomainError("VALIDATION_ERROR", `${field} is required.`, field);
+  return text;
+};
+
+const normalizeProposalText = (value: unknown, field: string, max: number): string => {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (!text) throw new AiInvalidResponse(`Proposal ${field} is required.`);
+  if (text.length > max) throw new AiInvalidResponse(`Proposal ${field} is too long.`);
+  return text;
+};
+
+const normalizeEvidence = (evidence: unknown): AiEvidenceRef[] => {
+  if (evidence == null) return [];
+  if (!Array.isArray(evidence)) throw new AiInvalidResponse("Evidence must be a list.");
+  return evidence.map((entry): AiEvidenceRef => {
+    if (!entry || typeof entry !== "object") throw new AiInvalidResponse("Evidence entry is invalid.");
+    const { kind, ref, locator, excerpt } = entry as Partial<AiEvidenceRef>;
+    if (!kind || !AI_PROVENANCE_KINDS.includes(kind)) throw new AiInvalidResponse("Evidence kind is invalid.");
+    return {
+      kind,
+      ref: typeof ref === "string" && ref.trim() ? ref.trim() : null,
+      locator: typeof locator === "string" && locator.trim() ? locator.trim() : null,
+      excerpt: typeof excerpt === "string" && excerpt.trim() ? excerpt.trim() : null,
+    };
+  });
+};
+
+/**
+ * Project-scoped AI service boundary. Validates a request, sends explicitly
+ * constructed context to a provider, and returns structured, provenance-carrying,
+ * non-canonical proposals. It never promotes a proposal to canonical state and
+ * never accesses persistence (it holds no repository).
+ */
+export class AiService {
+  private readonly provider: AiModelProvider;
+  private readonly now: () => string;
+  constructor(provider: AiModelProvider, options?: { now?: () => string }) {
+    this.provider = provider;
+    this.now = options?.now ?? nowIso;
+  }
+
+  async propose(request: AiProposalRequest): Promise<AiResult<AiProposalResponse>> {
+    // 1. Validate the request. Any validation failure is a typed error, not a throw.
+    let projectId: string, purpose: string, desiredKind: AiProposalKind, instructions: string | null;
+    try {
+      projectId = assertIdentifier(request.projectId, "projectId");
+      purpose = requireAiText(request.purpose, "purpose");
+      if (!isProposalKind(request.desiredKind)) throw new VaultDomainError("VALIDATION_ERROR", "Unknown proposal kind.", "desiredKind");
+      desiredKind = request.desiredKind;
+      instructions = typeof request.instructions === "string" && request.instructions.trim() ? request.instructions.trim() : null;
+    } catch (error) {
+      return aiErr("AI_VALIDATION_ERROR", error instanceof Error ? error.message : "Invalid AI request.");
+    }
+    // Project isolation: the supplied context must belong to the requested project.
+    if (!request.context || request.context.projectId !== projectId) {
+      return aiErr("AI_PROJECT_ISOLATION", "Context does not belong to the requested project.");
+    }
+
+    const providerRequest: AiProviderRequest = { projectId, purpose, instructions, context: request.context, desiredKind };
+
+    // 2. Call the provider. Failures are surfaced as typed errors; nothing throws to the caller.
+    let raw: AiProviderRawResponse;
+    try {
+      raw = await this.provider.generate(providerRequest);
+    } catch (error) {
+      if (error instanceof AiProviderError && error.transport) return aiErr("AI_TRANSPORT_ERROR", error.message, this.provider.id);
+      return aiErr("AI_PROVIDER_ERROR", error instanceof Error ? error.message : "Provider failed.", this.provider.id);
+    }
+
+    // 3. Normalize and enforce trust invariants. A single violation invalidates the whole response.
+    const createdAt = this.now();
+    const requestId = `air_${stableHash(JSON.stringify(providerRequest) + createdAt)}`;
+    const model = raw.model ?? this.provider.model;
+    try {
+      const rawProposals = Array.isArray(raw.proposals) ? raw.proposals : [];
+      const proposals = rawProposals.map((rawProposal, index) =>
+        this.normalizeProposal(rawProposal, { projectId, requestId, index, provider: this.provider.id, model, createdAt }));
+      return { ok: true, value: { requestId, projectId, proposals, provider: this.provider.id, model, createdAt } };
+    } catch (error) {
+      return aiErr("AI_RESPONSE_INVALID", error instanceof Error ? error.message : "Invalid provider response.", this.provider.id);
+    }
+  }
+
+  private normalizeProposal(
+    raw: AiRawProposal,
+    ctx: { projectId: string; requestId: string; index: number; provider: string; model: string | null; createdAt: string },
+  ): AiProposal {
+    if (!raw || typeof raw !== "object") throw new AiInvalidResponse("Proposal is malformed.");
+    if (!isProposalKind(raw.kind)) throw new AiInvalidResponse("Proposal kind is invalid.");
+    const title = normalizeProposalText(raw.title, "title", AI_TITLE_MAX);
+    const body = normalizeProposalText(raw.body, "body", AI_BODY_MAX);
+    const evidence = normalizeEvidence(raw.evidence);
+    const inferred = raw.inferred === true;
+    // Provenance requirement: a claim must cite evidence OR be explicitly flagged as model inference.
+    if (evidence.length === 0 && !inferred) {
+      throw new AiInvalidResponse("Proposal has no evidence and is not flagged as model inference.");
+    }
+    return {
+      id: `aip_${ctx.requestId.slice(4)}_${ctx.index}`,
+      projectId: ctx.projectId,
+      kind: raw.kind,
+      title,
+      body,
+      status: "proposed",
+      provenance: { provider: ctx.provider, model: ctx.model, generatedAt: ctx.createdAt, evidence, inferred },
+      createdAt: ctx.createdAt,
+    };
+  }
 }

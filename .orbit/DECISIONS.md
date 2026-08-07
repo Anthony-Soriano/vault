@@ -33,6 +33,22 @@ When AI exists (Phase 3), it generates candidate knowledge with citations and ne
 ### AI-generated Project Truth requires approval
 Vault may detect missing or stale Project Truth and generate drafts or proposed updates, but it never silently creates, replaces, or promotes AI-generated documentation as authoritative. **Why:** repository analysis can infer technical reality but may misinterpret intent, product direction, or historical reasoning. Owner review preserves trust.
 
+## Phase 3 — AI + Project Truth Engine
+
+Owner-approved 2026-08-06 alongside the start of Phase 3 planning.
+
+### Phase 3 is delivered incrementally as `v0.3.0` → `v0.3.5`
+Phase 3 ships as ordered release slices: `v0.3.0` AI Foundation, `v0.3.1` Project Context & Repository Analysis, `v0.3.2` Project Truth Bootstrap, `v0.3.3` AI Proposal Review & Approval, `v0.3.4` Knowledge Proposal Engine, `v0.3.5` Project Truth Maintenance. Only the slice named active in `.orbit/CURRENT_PHASE.md` is approved implementation scope. **Why:** AI is the first non-user writer of proposals into the product; incremental slices keep the trust model and scope controllable and let each boundary be verified before the next builds on it.
+
+### AI architecture is provider-neutral / replaceable
+The AI layer is built against a provider-neutral abstraction; no single model vendor is baked into the product, and swapping providers must not require changing the AI contracts or service boundary. **Why:** models and vendors change quickly; provider neutrality protects the product from lock-in and keeps analysis local-first-capable, and no provider decision has been made.
+
+### AI remains proposal-only with explicit user approval
+Across every Phase 3 capability, AI generates candidate proposals with provenance and never writes canonical state directly; nothing AI-generated becomes canonical without an explicit user action. **Why:** this is the product's core trust guarantee — a fallible model mutating memory silently would destroy it. (Reaffirms and extends "AI only proposes" for all Phase 3 slices.)
+
+### Project Truth maintenance uses change proposals, not silent edits
+Keeping Project Truth aligned with an evolving project (`v0.3.5`) is done by generating evidence-backed *update* proposals that the user reviews, never by silently modifying Project Truth files. **Why:** Project Truth is human-editable and authoritative; silent AI rewrites would reintroduce exactly the untrusted-mutation problem the product exists to prevent.
+
 ## Architecture and integration
 
 ### Graph is a view, not another database

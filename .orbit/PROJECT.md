@@ -41,7 +41,7 @@ Not a cloud notes app. Not a graph-database UI. Not an autonomous agent that edi
 
 ## Current status
 
-**v0.2.0 — Phase 2 complete.** The manual knowledge system is done: projects, folders, documents/files, knowledge objects, typed relationships, evidence, plus the Phase 2.4 lifecycle (history / supersede / merge) and deterministic integrity checks. No AI subsystem exists yet. Phase 3 (AI proposals) is the next milestone and is **not yet planned**. Deferred Phase 1.2/1.3 items are tracked in `.orbit/BACKLOG.md`.
+**v0.3.0 — Phase 3 active (AI Foundation slice complete).** The Phase 2 manual knowledge system is done (projects, folders, documents/files, knowledge objects, typed relationships, evidence, the Phase 2.4 lifecycle, and deterministic integrity), and the pre-Phase-3 release-readiness item BL-03 (recovery/backup) is complete. **Phase 3 — AI + Project Truth Engine** is now the active phase (owner-approved 2026-08-06), delivered incrementally as `v0.3.0` (AI Foundation) → `v0.3.5` (Project Truth Maintenance); only the slice named active in `.orbit/CURRENT_PHASE.md` is approved implementation scope. The `v0.3.0` AI Foundation is implemented and verified: a provider-neutral, proposal-only AI service boundary now exists internally in `packages/vault-core` (see `.orbit/ARCHITECTURE.md`) — internal plumbing only, with no user-facing AI behavior yet, no repository analysis, and no Project Truth generation. Deferred items are tracked in `.orbit/BACKLOG.md`.
 
 ## Reading order
 

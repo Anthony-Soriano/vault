@@ -36,17 +36,48 @@ Status reflects `main` / tag `v0.2.0`. "Planned" phases are not scope until writ
 
 ## Current phase
 
-**Between phases — Phase 2 baseline (`v0.2.0`) plus completed BL-03 recovery/backup; Phase 3 not yet planned.** No active implementation scope until `.orbit/CURRENT_PHASE.md` is populated with owner-approved Phase 3 scope. See `.orbit/CURRENT_PHASE.md`.
+**Phase 3 — AI + Project Truth Engine — ACTIVE.** Phase 2 baseline is locked (`v0.2.0`); the pre-Phase-3 release-readiness item BL-03 (recovery/backup) is complete. Owner approved Phase 3 planning on 2026-08-06; Phase 3 is delivered incrementally as `v0.3.0` → `v0.3.5`. **`v0.3.0` (AI Foundation) is complete and locked at tag `v0.3.0`.** Phase 3 is now **between slices**: no slice is under active implementation, and `v0.3.1`–`v0.3.5` remain planned, not active scope. `v0.3.1` becomes active only when written into `.orbit/CURRENT_PHASE.md` with owner approval (Rule 3, root `AGENTS.md`). See `.orbit/CURRENT_PHASE.md`.
+
+## Phase 3 — AI + Project Truth Engine (active)
+
+**Purpose:** introduce AI as a controlled reasoning/proposal layer over the existing manual knowledge system. The core trust model does **not** change: AI proposes and never silently mutates canonical knowledge; every AI-generated interpretation carries provenance/evidence; the user remains the authority; AI uses Vault's service/API boundaries and never touches `vault.db` directly; project context stays isolated; Project Truth stays human-editable and transparent; repository evidence establishes implemented technical reality but cannot reliably determine owner intent; the provider architecture stays replaceable/provider-neutral.
+
+Phase 3 is delivered incrementally through the following release slices. Only the slice named active in `.orbit/CURRENT_PHASE.md` is approved implementation scope; the rest are planned.
+
+### v0.3.0 — AI Foundation ✅ complete (tag `v0.3.0`)
+- **Objective:** establish the internal infrastructure AI features require, without yet attempting autonomous repository understanding or Project Truth generation.
+- **Deliverables:** AI/model provider abstraction; project-scoped AI service boundary; typed request/response contracts; context input/output structures; provenance structures for model-generated proposals; provider selection/configuration; basic infrastructure to send explicitly constructed context to a model and receive structured proposals; clear failure/error handling; tests around the new boundaries and trust invariants.
+- **Done when:** the plumbing that later Phase 3 slices consume exists and is tested, with no autonomous repository understanding, no Project Truth generation, no silent knowledge creation, and no provider lock-in. **Achieved:** provider-neutral `AiService`/`AiModelProvider`/`StubAiProvider` in `vault-core`, AI contracts in `vault-types`, 15 trust-invariant tests, full gate green (see `.orbit/ARCHITECTURE.md`).
+
+### v0.3.1 — Project Context & Repository Analysis ⬜ (planned)
+- **Objective:** give Vault a deterministic/local-first mechanism for understanding what evidence exists in a project and constructing controlled context for AI.
+- **Deliverables:** discover relevant project/repository files; respect ignore rules and filesystem boundaries; identify important project structure and technical evidence; detect whether a Project Truth stack appears complete/partial/missing/duplicated/potentially stale; construct transparent, inspectable context packages; avoid blindly sending an entire repository when targeted evidence suffices.
+- **Done when:** Vault analyzes and packages evidence into transparent context; it does **not** yet promote generated Project Truth to canonical state.
+
+### v0.3.2 — Project Truth Bootstrap ⬜ (planned)
+- **Objective:** use repository evidence + the AI proposal pipeline to draft missing Project Truth, handling the three states in `.orbit/PRODUCT_SPEC.md` (none / partial / existing).
+- **Deliverables:** evidence-backed Project Truth proposals; clear separation of inferred technical facts from owner-intent information that cannot be safely inferred; cited evidence behind generated claims; surfacing of missing information that needs owner input; drafts/proposals rather than silent authoritative writes. Owner outcomes to support (review interaction may complete in v0.3.3): Create · Merge · Replace · Skip · Keep existing file authoritative.
+- **Done when:** Vault produces evidence-backed Project Truth drafts that never become canonical without owner action.
+
+### v0.3.3 — AI Proposal Review & Approval ⬜ (planned)
+- **Objective:** the complete human-in-the-loop workflow for AI proposals.
+- **Deliverables:** inspect a proposed change and its evidence/provenance; compare proposed vs existing state where applicable; edit/approve/reject/merge/replace; preserve history/auditability; guarantee nothing AI-generated becomes canonical without explicit user action. Works with both Project Truth proposals and the broader proposal infrastructure where sensible.
+- **Done when:** every AI proposal type flows through an auditable review/approval gate before becoming canonical.
+
+### v0.3.4 — Knowledge Proposal Engine ⬜ (planned)
+- **Objective:** allow AI to convert project evidence/context into candidate canonical Knowledge Objects using the existing knowledge system.
+- **Deliverables:** proposals across the existing canonical knowledge types (Fact, Decision, Goal, Question, Idea, Preference); evidence/provenance required; proposal status non-canonical until approved; existing lifecycle/history/integrity rules continue to hold; no silent mutation.
+- **Done when:** AI can propose typed Knowledge Objects with provenance that the user approves before anything becomes canonical.
+
+### v0.3.5 — Project Truth Maintenance ⬜ (planned)
+- **Objective:** move from one-time Project Truth creation toward keeping Project Truth aligned with an evolving project.
+- **Deliverables:** detect meaningful changes in project evidence; determine which Project Truth domains may have become stale; generate evidence-backed update proposals; show what changed and why; avoid unnecessary rewrites/churn; never silently modify Project Truth; user reviews every canonical change.
+- **Done when:** Project Truth stays aligned with the project through owner-reviewed change proposals rather than silent edits.
+
+### Phase 3 boundaries (all slices)
+Do **not** introduce: autonomous canonical memory mutation; hidden AI memory; cross-project context leakage; direct AI access to SQLite; cloud-sync requirements; an AI coding IDE; a second graph/database source of truth; automatic semantic claims presented as deterministic truth. Semantic reasoning must remain clearly identified as AI-generated judgment.
 
 ## Future phases
-
-### Phase 3 — AI proposals ⬜ (next major)
-- **Objective:** AI proposes cited candidate knowledge; the user approves.
-- **Dependencies:** complete manual system + deterministic integrity (done), plus a model provider. (No provider is approved; a local model such as Ollama is one example only, not a decision.)
-- **Deliverables:** project-scoped assistant, transparent context builder, evidence-cited proposals, approve/edit/merge/reject flow.
-- **Project Truth foundation (part of Phase 3):** local project analysis; transparent context construction; evidence-backed **Project Truth** proposals; detection of missing, incomplete, or stale Project Truth; and owner review and approval before any file is created or updated (the Project Truth Bootstrap workflow in `.orbit/PRODUCT_SPEC.md`).
-- **Done when:** AI can propose knowledge with provenance that the user reviews before anything becomes canonical; no direct DB access; no silent mutation.
-- **Exclusions:** autonomous mutation, hidden memory, cross-project context leakage. Analysis is local-first — the design must not require sending the entire repository to a remote model, and remains provider-neutral (no provider chosen).
 
 ### Phase 4 — Project DNA ⬜
 - **Objective:** derived, regenerable project intelligence (purpose, architecture, goals, decisions, open questions, known problems).
