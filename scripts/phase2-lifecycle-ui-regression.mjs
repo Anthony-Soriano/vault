@@ -184,4 +184,21 @@ for (const selector of [".integrity-view", ".integrity-summary", ".integrity-gro
   assert.match(styles, new RegExp(selector.replace(".", "\\.")), `Missing integrity UI style: ${selector}`);
 }
 
+// --- v0.3.1 Project Context & Repository Analysis contract (read-only) ---
+const projectContext = read("apps/vault-desktop/renderer/src/ProjectContextView.tsx");
+requireContract(main, /handle\("vault:context:analyze", projectId => vault\.context\.analyze\(projectId\)\);/, "context analyze main handler (read-only, no mutates flag)");
+assert.doesNotMatch(main, /vault:context:analyze"[^;]*, true\)/, "context analyze must not be marked as mutating");
+requireContract(preload, /context: \{ analyze: \(projectId\) => call\("vault:context:analyze", projectId\) \},/, "preload context.analyze bridge method");
+requireContract(types, /context: \{ analyze\(projectId: string\): Promise<ApiResult<ProjectContextAnalysis>> \};/, "VaultRendererApi context contract");
+requireContract(projectContext, /window\.vault\.context\.analyze\(/, "ProjectContextView must call window.vault.context.analyze");
+assert.doesNotMatch(projectContext, /window\.vault\.(?!context\.analyze)\w+\.(create|update|approve|archive|restore|supersede|merge|attach|remove|trash|delete|reconcile)/, "ProjectContextView must remain read-only (no mutating vault calls)");
+requireContract(app, /view==="context"/, "App must mount the Project Context view");
+requireContract(app, /<ProjectContextView /, "App must render ProjectContextView");
+for (const label of ["Project Truth readiness", "Evidence inventory", "Context package", "Read-only analysis"]) {
+  requireContract(projectContext, new RegExp(label), `Missing Project Context UI label: ${label}`);
+}
+for (const selector of [".context-view", ".context-readiness", ".context-inventory", ".context-package", ".context-overlay"]) {
+  assert.match(styles, new RegExp(selector.replace(/\./g, "\\.")), `Missing Project Context UI style: ${selector}`);
+}
+
 console.log("Lifecycle IPC/preload/UI regression checks passed.");

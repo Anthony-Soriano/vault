@@ -51,6 +51,7 @@ const vaultApi: VaultRendererApi = {
     remove: (id) => call("vault:relationships:remove", id),
   },
   integrity: { analyze: (projectId) => call("vault:integrity:analyze", projectId) },
+  context: { analyze: (projectId) => call("vault:context:analyze", projectId) },
   backup: {
     create: () => call("vault:backup:create"),
     list: () => call("vault:backup:list"),

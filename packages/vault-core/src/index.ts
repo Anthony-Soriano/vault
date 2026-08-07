@@ -10,6 +10,10 @@ import type {
   AiProposalRequest, AiProposalResponse, AiProvenanceKind, AiProviderRawResponse, AiProviderRequest,
   AiRawProposal, AiResult, AiContextItemKind,
 } from "@orbit/vault-types";
+import type {
+  ProjectContextAnalysis, ProjectEvidenceCategory, ProjectEvidenceInventory, ProjectEvidenceItem,
+  ProjectTruthReadiness, ProjectTruthReadinessState, RawEvidenceFile,
+} from "@orbit/vault-types";
 
 export class VaultDomainError extends Error {
   readonly code: "VALIDATION_ERROR" | "NOT_FOUND" | "DUPLICATE" | "INVALID_MOVE";
@@ -98,6 +102,7 @@ export interface VaultRepository extends ProjectRepository, FolderRepository, Do
   resetDevelopmentVault(): VaultSnapshot;
   reconcileFilesystem(): ReconciliationReport;
   analyzeIntegrity(projectId: string): IntegrityReport;
+  analyzeProjectContext(projectId: string): ProjectContextAnalysis;
   createSnapshot(options: CreateSnapshotOptions): SnapshotSummary;
   listSnapshots(): SnapshotSummary[];
   inspectSnapshot(snapshotId: string): SnapshotInspection;
@@ -166,6 +171,9 @@ export class VaultService {
   };
   integrity = {
     analyze: (projectId: string) => this.repository.analyzeIntegrity(assertIdentifier(projectId, "projectId")),
+  };
+  context = {
+    analyze: (projectId: string) => this.repository.analyzeProjectContext(assertIdentifier(projectId, "projectId")),
   };
   backup = {
     create: (options: CreateSnapshotOptions) => this.repository.createSnapshot(options),
@@ -538,3 +546,162 @@ export class AiService {
     };
   }
 }
+
+// --- Phase 3 / v0.3.1 — Project Context & Repository Analysis (deterministic, local-first) ---
+// Pure analyzers over a discovered file list. No fs, no SQLite, no model, no mutation.
+// `classifyEvidence` and `detectProjectTruthReadiness` are byte-deterministic (no clock);
+// `buildProjectContextPackage` takes an injected clock, exactly like `createAiContextPackage`.
+
+export const PROJECT_CONTEXT_RULE_VERSION = "1";
+
+/** The `.orbit/` documents that constitute a complete Project Truth stack. */
+const REQUIRED_TRUTH_DOCS = [
+  "PROJECT.md", "PRODUCT_SPEC.md", "ARCHITECTURE.md", "DECISIONS.md",
+  "ROADMAP.md", "CURRENT_PHASE.md", "BACKLOG.md",
+] as const;
+/** Upper bounds so a context package stays targeted, never the whole repository. */
+const CONTEXT_MAX_ITEMS = 40;
+const CONTEXT_MAX_CHARS = 4000;
+
+const posixBasename = (relativePath: string): string => { const parts = relativePath.split("/"); return parts[parts.length - 1] ?? relativePath; };
+const posixExt = (relativePath: string): string => { const base = posixBasename(relativePath); const dot = base.lastIndexOf("."); return dot > 0 ? base.slice(dot).toLowerCase() : ""; };
+const posixSegments = (relativePath: string): string[] => relativePath.split("/").filter(Boolean);
+
+const MANIFEST_BASENAMES = new Set(["package.json", "pnpm-workspace.yaml", "pnpm-lock.yaml", "package-lock.json", "yarn.lock", "cargo.toml", "go.mod", "go.sum", "requirements.txt", "pyproject.toml", "pipfile", "gemfile", "composer.json", "build.gradle", "pom.xml"]);
+const SOURCE_EXTS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".go", ".rs", ".java", ".rb", ".c", ".h", ".hpp", ".cpp", ".cc", ".cs", ".php", ".swift", ".kt", ".scala", ".sh", ".bash", ".ps1"]);
+const DOC_EXTS = new Set([".md", ".mdx", ".rst", ".txt", ".adoc"]);
+const CONFIG_EXTS = new Set([".json", ".yml", ".yaml", ".toml", ".ini", ".env", ".cfg", ".conf"]);
+const CONFIG_BASENAMES = new Set([".gitignore", ".npmrc", ".editorconfig", ".prettierrc", ".eslintrc", ".gitattributes", ".nvmrc"]);
+const TODO_BASENAMES = new Set(["todo", "todos", "fixme", "fixmes"]);
+const TEXT_LIKE_EXTS = new Set([...SOURCE_EXTS, ...DOC_EXTS, ...CONFIG_EXTS, ".sql", ".css", ".html", ".xml", ".svg", ".graphql"]);
+
+/** Deterministic, path/extension-based technical-fact classification. No content is read; no owner intent inferred. */
+const classifyEvidenceCategory = (relativePath: string): ProjectEvidenceCategory => {
+  const base = posixBasename(relativePath);
+  const lower = base.toLowerCase();
+  const ext = posixExt(relativePath);
+  const segments = posixSegments(relativePath);
+  const nameNoExt = ext ? lower.slice(0, lower.length - ext.length) : lower;
+
+  // Project Truth stack + recognized context docs.
+  if (segments[0] === ".orbit" && ext === ".md") return "project_truth";
+  if (lower === "agents.md" || lower === "readme.md") return "project_truth";
+  // Explicit TODO/FIXME marker files (filename-based; not a content scan).
+  if (TODO_BASENAMES.has(nameNoExt) && (ext === "" || TEXT_LIKE_EXTS.has(ext))) return "todo_marker";
+  // Dependency/build manifests.
+  if (MANIFEST_BASENAMES.has(lower)) return "manifest";
+  // Schema & migrations.
+  if (ext === ".sql") return "schema_migration";
+  if (segments.some(s => s === "migration" || s === "migrations")) return "schema_migration";
+  // Tests.
+  if (/\.(test|spec)\.[cm]?[jt]sx?$/.test(lower)) return "test";
+  if (segments.some(s => s === "test" || s === "tests" || s === "__tests__")) return "test";
+  // Config.
+  if (/\.config\.[cm]?[jt]s$/.test(lower) || /\.config\.(json|ya?ml)$/.test(lower)) return "config";
+  if (lower.startsWith("tsconfig") && ext === ".json") return "config";
+  if (CONFIG_BASENAMES.has(lower)) return "config";
+  if (CONFIG_EXTS.has(ext)) return "config";
+  // Documentation.
+  if (DOC_EXTS.has(ext)) return "documentation";
+  // Source code.
+  if (SOURCE_EXTS.has(ext)) return "source";
+  return "other";
+};
+
+/** Classify a discovered file list into a deterministic, stably-ordered evidence inventory. Pure. */
+export function classifyEvidence(input: { projectId: string; files: RawEvidenceFile[]; truncated?: boolean }): ProjectEvidenceInventory {
+  const items: ProjectEvidenceItem[] = input.files
+    .map(file => ({ relativePath: file.relativePath, category: classifyEvidenceCategory(file.relativePath), sizeBytes: file.sizeBytes }))
+    .sort((a, b) => a.relativePath.localeCompare(b.relativePath));
+  return { projectId: input.projectId, items, totalFiles: items.length, truncated: input.truncated === true };
+}
+
+/** Deterministically assess the Project Truth stack. Staleness signals are labeled heuristics, never semantic judgment. Pure. */
+export function detectProjectTruthReadiness(inventory: ProjectEvidenceInventory): ProjectTruthReadiness {
+  // Consider both project_truth items and any stray .md with a truth-doc basename (competing copies).
+  const candidates = inventory.items.filter(item => item.category === "project_truth" || item.category === "documentation");
+  const present: string[] = [], missing: string[] = [], duplicates: string[] = [], stalenessSignals: string[] = [];
+
+  for (const doc of REQUIRED_TRUTH_DOCS) {
+    const canonical = `.orbit/${doc}`;
+    const matches = candidates.filter(item => posixBasename(item.relativePath) === doc);
+    const canonicalMatch = matches.find(item => item.relativePath === canonical);
+    if (canonicalMatch) {
+      present.push(canonical);
+      if (canonicalMatch.sizeBytes === 0) stalenessSignals.push(`${canonical} is present but empty`);
+    } else {
+      missing.push(canonical);
+    }
+    if (matches.length > 1) duplicates.push(...matches.map(match => match.relativePath));
+  }
+
+  const presentDocuments = [...present].sort();
+  const missingDocuments = [...missing].sort();
+  const duplicateDocuments = [...new Set(duplicates)].sort();
+  const signals = [...stalenessSignals].sort();
+
+  let state: ProjectTruthReadinessState;
+  if (presentDocuments.length === 0) state = "missing";
+  else if (duplicateDocuments.length > 0) state = "duplicated";
+  else if (missingDocuments.length > 0) state = "partial";
+  else if (signals.length > 0) state = "potentially_stale";
+  else state = "complete";
+
+  return { state, presentDocuments, missingDocuments, duplicateDocuments, stalenessSignals: signals };
+}
+
+/** Priority order for context selection: highest-signal evidence first. */
+const CONTEXT_CATEGORY_PRIORITY: ProjectEvidenceCategory[] = ["project_truth", "manifest", "schema_migration", "config", "documentation", "todo_marker", "test", "source", "other"];
+
+/** Deterministically select a bounded, targeted subset of evidence paths for the context package. Pure. */
+export function selectContextEvidence(inventory: ProjectEvidenceInventory): string[] {
+  return [...inventory.items]
+    .sort((a, b) => {
+      const pa = CONTEXT_CATEGORY_PRIORITY.indexOf(a.category), pb = CONTEXT_CATEGORY_PRIORITY.indexOf(b.category);
+      return pa !== pb ? pa - pb : a.relativePath.localeCompare(b.relativePath);
+    })
+    .slice(0, CONTEXT_MAX_ITEMS)
+    .map(item => item.relativePath);
+}
+
+const evidenceCategoryToContextKind = (category: ProjectEvidenceCategory): AiContextItemKind =>
+  category === "project_truth" ? "project_truth" : category === "documentation" ? "document" : "repository_file";
+
+/**
+ * Assemble an inspectable, targeted `AiContextPackage` from selected evidence. Pure.
+ * Reuses the v0.3.0 contract verbatim: every item is source-traceable via `sourceRef`.
+ * This builds the package a later slice *could* send to a provider; v0.3.1 never sends it.
+ */
+export function buildProjectContextPackage(input: {
+  projectId: string;
+  inventory: ProjectEvidenceInventory;
+  readiness: ProjectTruthReadiness;
+  contents: { relativePath: string; content: string }[];
+  purpose?: string;
+  now?: () => string;
+}): AiContextPackage {
+  const categoryByPath = new Map(input.inventory.items.map(item => [item.relativePath, item.category] as const));
+  const summary: AiContextItem = {
+    id: "pctx-readiness",
+    kind: "note",
+    label: "Project Truth readiness",
+    content: `state=${input.readiness.state}; present=${input.readiness.presentDocuments.length}; missing=${input.readiness.missingDocuments.length}; duplicates=${input.readiness.duplicateDocuments.length}; files=${input.inventory.totalFiles}${input.inventory.truncated ? " (truncated)" : ""}`,
+    sourceRef: null,
+  };
+  const items: AiContextItem[] = input.contents.map((entry, index): AiContextItem => ({
+    id: `pctx-${index}`,
+    kind: evidenceCategoryToContextKind(categoryByPath.get(entry.relativePath) ?? "other"),
+    label: entry.relativePath,
+    content: entry.content.length > CONTEXT_MAX_CHARS ? entry.content.slice(0, CONTEXT_MAX_CHARS) : entry.content,
+    sourceRef: entry.relativePath,
+  }));
+  return createAiContextPackage({
+    projectId: input.projectId,
+    purpose: input.purpose ?? `Project context analysis for ${input.projectId}`,
+    items: [summary, ...items],
+    now: input.now,
+  });
+}
+
+/** The bounds discovery/packaging enforce, exported so the storage layer and tests share one source of truth. */
+export const PROJECT_CONTEXT_LIMITS = { maxItems: CONTEXT_MAX_ITEMS, maxChars: CONTEXT_MAX_CHARS } as const;

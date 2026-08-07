@@ -1,16 +1,33 @@
 This is the operational center. Do not implement work that is absent from this file (Rule 3, root `AGENTS.md`). Update it after completed work (Rule 9); run the full closeout when completing a phase (Rule 11).
 
-**State: PHASE 3 ACTIVE — slice `v0.3.1` (Project Context & Repository Analysis) is ACTIVE (owner-approved 2026-08-06).** `v0.3.0` (AI Foundation) is COMPLETE and locked at tag `v0.3.0`. `v0.3.2`–`v0.3.5` remain **planned and inactive** — they are not approved implementation scope and must not be implemented until this file is updated with owner approval. Phase 2 is complete and locked at tag `v0.2.0`; BL-03 (Recovery & Backup) is complete (owner acceptance 2026-08-06).
-
-This slice is **analysis and context packaging only**. It must not drift into `v0.3.2` (Project Truth Bootstrap / draft generation) or `v0.3.3` (proposal review & approval). Nothing in this slice generates Project Truth, creates proposals, invokes a live model, or writes canonical state.
+**State: PHASE 3 ACTIVE — slice `v0.3.1` (Project Context & Repository Analysis) is COMPLETE and verified. Between slices: `v0.3.2` is NOT activated; awaiting owner approval to advance.** `v0.3.0` (AI Foundation) is complete and locked at tag `v0.3.0`; `v0.3.1` is complete and tagged `v0.3.1`. `v0.3.2`–`v0.3.5` remain **planned and inactive** — not approved implementation scope until this file is updated with owner approval. Phase 2 is complete and locked at tag `v0.2.0`; BL-03 (Recovery & Backup) is complete (owner acceptance 2026-08-06).
 
 ## Current objective
 
-Give Vault a **deterministic, local-first** mechanism to (a) discover the relevant evidence that exists in a project, (b) classify that evidence and detect the readiness state of the project's Project Truth stack, and (c) assemble a transparent, inspectable **context package** (reusing the `v0.3.0` `AiContextPackage` contracts) from targeted evidence — without generating Project Truth, without calling a model to produce content, and without promoting anything to canonical state.
+None active. `v0.3.1` (Project Context & Repository Analysis) is delivered and verified (see "Just completed"). Awaiting an owner decision to approve advancement to `v0.3.2` (Project Truth Bootstrap). No `v0.3.2` work is authorized.
 
-This delivers the roadmap foundations for **PC-01** (Project Truth readiness scan) and **PC-04** (context package for AI), scoped to internal capability + a read-only inspection boundary — mirroring the "internal plumbing" discipline of `v0.3.0`.
+## Just completed — v0.3.1 Project Context & Repository Analysis
 
-## Approved scope (v0.3.1)
+A deterministic, local-first, **read-only** analysis capability. It discovers a project's evidence, detects Project Truth readiness, and builds a targeted, source-traceable context package — with no Project Truth generation, no model invocation, no proposals, and no canonical mutation. All `v0.3.0` trust invariants hold unchanged.
+
+- **`packages/vault-types`** — additive contracts: `ProjectEvidenceCategory`, `RawEvidenceFile`, `ProjectEvidenceItem`, `ProjectEvidenceInventory`, `ProjectTruthReadinessState`, `ProjectTruthReadiness`, `ProjectContextAnalysis`; read-only `context.analyze` on `VaultRendererApi`. The `v0.3.0` `AiContextPackage`/`AiContextItem` contracts are reused verbatim.
+- **`packages/vault-core`** — pure analyzers (no fs/SQLite): `classifyEvidence`, `detectProjectTruthReadiness`, `selectContextEvidence`, `buildProjectContextPackage`; `PROJECT_CONTEXT_RULE_VERSION`, `PROJECT_CONTEXT_LIMITS`; `VaultService.context.analyze` (validates the id, delegates). Classification/readiness are byte-deterministic (no clock); packaging takes an injected clock.
+- **`packages/vault-storage`** — `SqliteVaultRepository.analyzeProjectContext(projectId)`: read-only walk of `projects/<id>/` reusing the reconciler `IGNORED_DIRECTORIES`/`IGNORED_FILES`, `safeLinkedKind`, and the shared `MAX_VISITED_ENTRIES` (25,000) cap (degrades to `truncated` instead of throwing); bounded, path-safe content reads; composes the pure analyzers. No writes.
+- **`apps/vault-desktop`** — read-only `vault:context:analyze` IPC (no `mutates`) + `window.vault.context.analyze` + a minimal, read-only `ProjectContextView` (readiness verdict, evidence inventory by category, context-package items). No edit/approve/generate controls.
+- **Tests** — `tests/phase3-project-context.test.ts` (15): classification, all readiness states, byte-identical determinism, targeted/bounded packaging, storage discovery, ignore/boundary/isolation, and no-mutation.
+- **Settled implementation details (within approved scope):** `todo_marker` is filename-based (not a content scan); context packages are bounded by `PROJECT_CONTEXT_LIMITS` (≤40 items, ≤4000 chars/item) to stay targeted; discovery degrades gracefully at the cap.
+- **Deliberately NOT done** (later slices / owner approval required): no Project Truth generation (`v0.3.2`); no proposal review UI (`v0.3.3`); no knowledge proposal engine (`v0.3.4`); no maintenance proposals (`v0.3.5`); no live model call; no canonical mutation.
+
+## Verification (`v0.3.1`) — Rule 11
+
+Full standing gate re-run **green on 2026-08-06** on the integrated tree, via `corepack pnpm` (Windows):
+
+- `corepack pnpm typecheck` — electron 0, renderer 0.
+- `corepack pnpm test` — **100/100** (85 prior + 15 new `tests/phase3-project-context.test.ts`).
+- `corepack pnpm build` — electron main + preload + renderer all build.
+- `node scripts/phase2-lifecycle-ui-regression.mjs` — passed; now also asserts the read-only `vault:context:analyze` contract (present, no `mutates`, preload + type + UI wiring).
+
+## Design & approved scope (v0.3.1) — for the record
 
 Derived from `.orbit/ROADMAP.md` (v0.3.1) and `.orbit/PRODUCT_SPEC.md` (Project Truth Bootstrap evidence boundaries; PC-01/PC-04). In scope:
 
@@ -70,13 +87,13 @@ Record exact commands, results (test counts), and the final commit hash in this 
 
 ## Active tasks
 
-Planned as small slices (Rule 7), test-first, gate green after each.
+None. All `v0.3.1` tasks are complete (design doc, execution plan, and the 8 TDD implementation tasks). Documents: [design](../docs/superpowers/specs/2026-08-06-v0.3.1-project-context-repository-analysis-design.md), [execution plan](../docs/superpowers/plans/2026-08-06-v0.3.1-project-context-repository-analysis-execution.md).
 
-- ✅ **v0.3.1 design doc** — `docs/superpowers/specs/2026-08-06-v0.3.1-project-context-repository-analysis-design.md` (approved design; module placement, data shapes, acceptance→test mapping, grounded in the existing reconciler ignore-lists/cap and the `v0.3.0` `AiContextPackage` contract).
-- ⬜ **Execution plan** — decompose the design into small TDD tasks under `docs/superpowers/plans/2026-08-06-v0.3.1-project-context-repository-analysis-execution.md`.
-- ⬜ **Implementation (TDD, per boundary):** (1) types → (2) storage discovery + shared cap/ignore extraction → (3) `classifyEvidence` → (4) `detectProjectTruthReadiness` → (5) `buildProjectContextPackage` → (6) `VaultService.analyzeProjectContext` → (7) read-only `vault:context:analyze` IPC + preload + regression assertion → (8) minimal renderer inspection view.
+## Known limitations (preserved, not dropped)
 
-UI-surface sub-decision **resolved (owner, 2026-08-06):** v0.3.1 ships a **read-only inspection surface** — a read-only `vault:*` IPC channel + minimal renderer inspection view over the analysis/readiness/context-package results (no Truth-generation UI, no write path). Recorded in `.orbit/DECISIONS.md`.
+- **`todo_marker` detection is filename-based**, not a content scan — deliberate, to keep discovery targeted and cheap. Content-level TODO/FIXME extraction is a possible later enhancement, not in `v0.3.1`.
+- **Staleness is a single deterministic heuristic** (present-but-empty required doc). Richer, still-deterministic staleness signals — and any *semantic* staleness — are later work (semantic belongs to AI-powered slices, never the deterministic layer).
+- **Large-Vault performance is bounded, not stress-proven** — discovery honors the shared 25,000-entry cap (degrading to `truncated`) but is not load-tested; that remains deferred **BL-06**.
 
 ## Blockers
 
@@ -93,4 +110,4 @@ Tracked in `.orbit/BACKLOG.md`. PC-01/PC-04 foundations are consumed by this sli
 
 ## Last verified commit
 
-Baseline for `v0.3.1`: `main` at `36ee83a` (release: v0.3.0 — Phase 3 AI Foundation), verified in sync with `origin/main`. The `v0.3.0` standing gate was green at that commit (85/85 tests). `v0.3.1` implementation builds on this baseline; this file records the activation of `v0.3.1` scope — no `v0.3.1` code has been written yet.
+`v0.3.1` — `main`, tagged `v0.3.1` (Phase 3 Project Context & Repository Analysis). Built on the `v0.3.0` baseline (tag `v0.3.0`, `36ee83a`) plus the docs activation checkpoint (`bff5c3e`). The release commit adds the `v0.3.1` analysis code (`packages/vault-types` contracts, `packages/vault-core` pure analyzers + service facade, `packages/vault-storage` discovery, `apps/vault-desktop` read-only IPC/preload/renderer), `tests/phase3-project-context.test.ts`, the regression-script assertions, and the `.orbit/` + `README.md` Project Truth updates. Full standing gate re-verified green on the integrated tree (see "Verification"): typecheck 0/0, **100/100** tests, build OK, regression OK.

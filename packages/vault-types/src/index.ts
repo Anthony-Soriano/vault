@@ -363,6 +363,63 @@ export interface AiProviderRawResponse {
   proposals: AiRawProposal[];
 }
 
+// --- Phase 3 / v0.3.1 — Project Context & Repository Analysis contracts ---
+// Deterministic, local-first analysis of a project's evidence. Read-only: nothing
+// here generates Project Truth, invokes a model, or mutates canonical state. The
+// context package it builds reuses the v0.3.0 AiContextPackage/AiContextItem verbatim.
+
+/** Technical-fact categories for discovered evidence. No category asserts owner intent. */
+export type ProjectEvidenceCategory =
+  | "manifest" | "config" | "schema_migration" | "test" | "documentation"
+  | "project_truth" | "source" | "todo_marker" | "other";
+
+/** A raw file discovered by the filesystem walker, before classification. */
+export interface RawEvidenceFile {
+  /** Project-relative POSIX path. */
+  relativePath: string;
+  sizeBytes: number;
+}
+
+/** One classified evidence file. Content is not embedded — the inventory is a manifest of what exists. */
+export interface ProjectEvidenceItem {
+  relativePath: string;
+  category: ProjectEvidenceCategory;
+  sizeBytes: number;
+}
+
+/** The deterministic inventory of a project's discoverable evidence (stably ordered). */
+export interface ProjectEvidenceInventory {
+  projectId: string;
+  items: ProjectEvidenceItem[];
+  totalFiles: number;
+  /** True when discovery hit the visited-entry cap and stopped early. */
+  truncated: boolean;
+}
+
+/** Deterministic readiness state of a project's Project Truth stack. */
+export type ProjectTruthReadinessState =
+  | "complete" | "partial" | "missing" | "duplicated" | "potentially_stale";
+
+/** Deterministic, inspectable assessment of the Project Truth stack. Staleness signals are heuristic, never semantic. */
+export interface ProjectTruthReadiness {
+  state: ProjectTruthReadinessState;
+  presentDocuments: string[];
+  missingDocuments: string[];
+  duplicateDocuments: string[];
+  /** Deterministic, labeled heuristic signals (e.g. present-but-empty truth doc). Not semantic judgment. */
+  stalenessSignals: string[];
+}
+
+/** The top-level read-only result of analyzing a project's context. */
+export interface ProjectContextAnalysis {
+  projectId: string;
+  ruleVersion: string;
+  inventory: ProjectEvidenceInventory;
+  readiness: ProjectTruthReadiness;
+  contextPackage: AiContextPackage;
+  generatedAt: string;
+}
+
 export interface VaultRendererApi {
   snapshot(): Promise<ApiResult<VaultSnapshot>>;
   onChanged(callback: () => void): () => void;
@@ -428,6 +485,7 @@ export interface VaultRendererApi {
     remove(id: string): Promise<ApiResult<{ id: string }>>;
   };
   integrity: { analyze(projectId: string): Promise<ApiResult<IntegrityReport>> };
+  context: { analyze(projectId: string): Promise<ApiResult<ProjectContextAnalysis>> };
   backup: {
     create(): Promise<ApiResult<SnapshotSummary>>;
     list(): Promise<ApiResult<SnapshotSummary[]>>;

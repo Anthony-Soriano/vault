@@ -91,6 +91,7 @@ const registerVaultIpc = () => {
   handle("vault:evidence:list", id => vault.evidence.list(id)); handle("vault:evidence:attach", input => vault.evidence.attach(input), true);
   handle("vault:relationships:list", filters => vault.relationships.list(filters)); handle("vault:relationships:create", input => vault.relationships.create(input), true); handle("vault:relationships:remove", id => vault.relationships.remove(id), true);
   handle("vault:integrity:analyze", projectId => vault.integrity.analyze(projectId));
+  handle("vault:context:analyze", projectId => vault.context.analyze(projectId));
   handle("vault:backup:create", () => withWriteBarrier(() => vault.backup.create({ appVersion: app.getVersion() })), true);
   handle("vault:backup:list", () => vault.backup.list());
   handle("vault:backup:inspect", (snapshotId: string) => vault.backup.inspect(snapshotId));

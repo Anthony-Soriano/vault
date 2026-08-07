@@ -56,11 +56,11 @@ Packaging config exists (`electron-builder.yml`, win/nsis, `Orbit-Vault-${versio
 
 Separate from BL-01…BL-08 (which came from the Phase 1.2/1.3 reconciliation audit). These capture the clarified **Project Truth Engine** product concept.
 
-**Disposition update (2026-08-06):** with the owner approving Phase 3 and its `v0.3.0`→`v0.3.5` slices (see `.orbit/ROADMAP.md`, `.orbit/DECISIONS.md`), PC-01…PC-04 have **formally entered the Phase 3 roadmap** and are no longer unplanned — each now maps to a planned slice below. Only the slice named active in `.orbit/CURRENT_PHASE.md` is approved for implementation: **`v0.3.1` (Project Context & Repository Analysis) is now active (owner-approved 2026-08-06)**, which consumes the **PC-01** (readiness scan) and **PC-04** (context package) foundations. PC-02 (`v0.3.2`) and PC-03 (`v0.3.5`) remain planned/inactive; PC-05 remains **deferred** unless an active Phase 3 slice specifically needs it. History retained below.
+**Disposition update (2026-08-06):** with the owner approving Phase 3 and its `v0.3.0`→`v0.3.5` slices (see `.orbit/ROADMAP.md`, `.orbit/DECISIONS.md`), PC-01…PC-04 have **formally entered the Phase 3 roadmap** and are no longer unplanned — each now maps to a slice below. The **PC-01** (readiness scan) and **PC-04** (context package) foundations were **delivered by `v0.3.1` (complete, tag `v0.3.1`)** — deterministic readiness detection + a targeted, read-only context package (their broader bootstrap/maintenance and external-API surfaces remain later work). PC-02 (`v0.3.2`) and PC-03 (`v0.3.5`) remain planned/inactive; PC-05 remains **deferred** unless an active Phase 3 slice specifically needs it. History retained below.
 
 ### PC-01 — Project Truth readiness scan
 Detect whether a project has a complete, partial, missing, stale, duplicated, or conflicting Project Truth stack.
-- **Disposition:** **active** — its readiness/completeness detection foundation is in the now-active **`v0.3.1`** slice (owner-approved 2026-08-06; see `.orbit/CURRENT_PHASE.md`). Further exercise by **`v0.3.2`** (bootstrap) and **`v0.3.5`** (staleness/maintenance) remains planned/inactive.
+- **Disposition:** **foundation delivered** — deterministic readiness/completeness detection shipped in **`v0.3.1`** (complete, tag `v0.3.1`; `detectProjectTruthReadiness` — `complete`/`partial`/`missing`/`duplicated`/`potentially_stale`). Further exercise by **`v0.3.2`** (bootstrap) and **`v0.3.5`** (staleness/maintenance) remains planned/inactive.
 
 ### PC-02 — Evidence-backed Project Truth bootstrap
 Analyze repository evidence and generate drafts for missing Project Truth documents, while clearly separating inferred technical facts from owner-supplied intent.
@@ -72,7 +72,7 @@ Observe meaningful project changes and propose updates to affected Project Truth
 
 ### PC-04 — Context package for external AI tools
 Expose a compact, controlled Project Truth/context package that Claude, Codex, Cursor, GPT, local models, and future Orbit tools can consume before deeper file inspection.
-- **Disposition:** **active** — the transparent context-package foundation is in the now-active **`v0.3.1`** slice (owner-approved 2026-08-06; see `.orbit/CURRENT_PHASE.md`). A stable externally-consumable API surface remains Phase 6 (Stable Vault API), still planned.
+- **Disposition:** **foundation delivered** — the transparent, targeted context-package builder shipped in **`v0.3.1`** (complete, tag `v0.3.1`; `buildProjectContextPackage`, reusing the `v0.3.0` `AiContextPackage` contract, exposed read-only via `window.vault.context.analyze`). A stable externally-consumable API surface remains Phase 6 (Stable Vault API), still planned.
 
 ### PC-05 — Context efficiency measurement
 Measure whether Vault reduces files read, input tokens, repeated repository analysis, orientation time, and unnecessary model cost compared with working without Vault.

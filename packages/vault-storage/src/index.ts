@@ -2,8 +2,8 @@ import { DatabaseSync } from "node:sqlite";
 import { createHash, randomUUID } from "node:crypto";
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import type { CreateEvidenceSourceInput, CreateFolderInput, CreateKnowledgeObjectInput, CreateMarkdownInput, CreateProjectInput, CreateRelationshipInput, CreateSnapshotOptions, DocumentFile, EntityStatus, EvidenceSource, Folder, ImportFilesInput, KnowledgeAggregateSnapshot, KnowledgeConfidence, KnowledgeEvidenceLink, KnowledgeFilters, KnowledgeHistoryEvent, KnowledgeHistoryRecord, KnowledgeObject, KnowledgeSearchInput, KnowledgeStatus, MergeKnowledgeInput, MergeKnowledgePreview, MergeKnowledgeResult, MergeRelationshipConflict, Project, ProjectFilters, ReconciliationReport, Relationship, RelationshipEndpointType, RelationshipFilters, RelationshipType, RestoreResult, RestoreSnapshotInput, SearchInput, SearchResult, SnapshotInspection, SnapshotManifest, SnapshotSummary, SupersedeKnowledgeInput, UpdateKnowledgeObjectInput, UpdateProjectInput, VaultSnapshot } from "@orbit/vault-types";
-import { VaultDomainError, analyzeKnowledgeIntegrity, assertIdentifier, type VaultRepository } from "@orbit/vault-core";
+import type { CreateEvidenceSourceInput, CreateFolderInput, CreateKnowledgeObjectInput, CreateMarkdownInput, CreateProjectInput, CreateRelationshipInput, CreateSnapshotOptions, DocumentFile, EntityStatus, EvidenceSource, Folder, ImportFilesInput, KnowledgeAggregateSnapshot, KnowledgeConfidence, KnowledgeEvidenceLink, KnowledgeFilters, KnowledgeHistoryEvent, KnowledgeHistoryRecord, KnowledgeObject, KnowledgeSearchInput, KnowledgeStatus, MergeKnowledgeInput, MergeKnowledgePreview, MergeKnowledgeResult, MergeRelationshipConflict, Project, ProjectContextAnalysis, ProjectFilters, RawEvidenceFile, ReconciliationReport, Relationship, RelationshipEndpointType, RelationshipFilters, RelationshipType, RestoreResult, RestoreSnapshotInput, SearchInput, SearchResult, SnapshotInspection, SnapshotManifest, SnapshotSummary, SupersedeKnowledgeInput, UpdateKnowledgeObjectInput, UpdateProjectInput, VaultSnapshot } from "@orbit/vault-types";
+import { VaultDomainError, analyzeKnowledgeIntegrity, assertIdentifier, buildProjectContextPackage, classifyEvidence, detectProjectTruthReadiness, selectContextEvidence, PROJECT_CONTEXT_LIMITS, PROJECT_CONTEXT_RULE_VERSION, type VaultRepository } from "@orbit/vault-core";
 
 type StorageOptions = { vaultRoot: string; developmentMode: boolean; developmentRoot: string };
 type DbRow = Record<string, string | null>;
@@ -428,7 +428,7 @@ export class SqliteVaultRepository implements VaultRepository {
     for(const project of this.listProjects({status:"active"})){if(!existsSync(this.projectFilesPath(project.id))){this.setProjectStatus(project.id,"archived");report.projectsArchived++;continue;}this.reconcileProject(project,report);}
     report.missingDocuments=this.listProjects().flatMap(project=>this.listProjectDocuments(project.id)).filter(item=>item.availability==="missing").length;return report;
   }
-  private reconcileProject(project:Project,report:ReconciliationReport){const root=this.projectFilesPath(project.id);if(!existsSync(root))return;const folderByPath=new Map(this.listProjectFolders(project.id).map(item=>[item.relativePath,item]));const documentPaths=new Set(this.listProjectDocuments(project.id).map(item=>item.relativePath));let visited=0;const visit=(absolute:string,relativePath:string,parentFolderId:string|null)=>{if(++visited>25000)throw new VaultDomainError("VALIDATION_ERROR",`Project ${project.name} exceeds the 25,000 item reconciliation limit.`);for(const entry of readdirSync(absolute,{withFileTypes:true})){const childRelative=posixJoin(relativePath,entry.name),childAbsolute=join(absolute,entry.name),linkedKind=entry.isSymbolicLink()?safeLinkedKind(childAbsolute,root):null,isDirectory=entry.isDirectory()||linkedKind==="directory",isFile=entry.isFile()||linkedKind==="file";if(entry.isSymbolicLink()&&!linkedKind){report.ignoredEntries++;continue;}if(isDirectory){if(IGNORED_DIRECTORIES.has(entry.name.toLowerCase())){report.ignoredEntries++;continue;}let folder=folderByPath.get(childRelative);if(!folder){const id=entityId(),timestamp=now();this.db.prepare("INSERT INTO folders VALUES (?, ?, ?, ?, ?, 'active', ?, ?)").run(id,project.id,parentFolderId,entry.name,childRelative,timestamp,timestamp);folder=this.getFolder(id);folderByPath.set(childRelative,folder);report.foldersAdded++;}visit(childAbsolute,childRelative,folder.id);continue;}if(!isFile||IGNORED_FILES.has(entry.name.toLowerCase())){report.ignoredEntries++;continue;}if(documentPaths.has(childRelative))continue;const id=entityId(),timestamp=now(),kind=extname(entry.name).toLowerCase()===".md"?"markdown":"file";this.db.prepare("INSERT INTO documents VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)").run(id,project.id,parentFolderId,entry.name,kind,childRelative,mimeFor(entry.name),timestamp,timestamp);documentPaths.add(childRelative);report.documentsAdded++;}};visit(root,"",null);}
+  private reconcileProject(project:Project,report:ReconciliationReport){const root=this.projectFilesPath(project.id);if(!existsSync(root))return;const folderByPath=new Map(this.listProjectFolders(project.id).map(item=>[item.relativePath,item]));const documentPaths=new Set(this.listProjectDocuments(project.id).map(item=>item.relativePath));let visited=0;const visit=(absolute:string,relativePath:string,parentFolderId:string|null)=>{if(++visited>MAX_VISITED_ENTRIES)throw new VaultDomainError("VALIDATION_ERROR",`Project ${project.name} exceeds the 25,000 item reconciliation limit.`);for(const entry of readdirSync(absolute,{withFileTypes:true})){const childRelative=posixJoin(relativePath,entry.name),childAbsolute=join(absolute,entry.name),linkedKind=entry.isSymbolicLink()?safeLinkedKind(childAbsolute,root):null,isDirectory=entry.isDirectory()||linkedKind==="directory",isFile=entry.isFile()||linkedKind==="file";if(entry.isSymbolicLink()&&!linkedKind){report.ignoredEntries++;continue;}if(isDirectory){if(IGNORED_DIRECTORIES.has(entry.name.toLowerCase())){report.ignoredEntries++;continue;}let folder=folderByPath.get(childRelative);if(!folder){const id=entityId(),timestamp=now();this.db.prepare("INSERT INTO folders VALUES (?, ?, ?, ?, ?, 'active', ?, ?)").run(id,project.id,parentFolderId,entry.name,childRelative,timestamp,timestamp);folder=this.getFolder(id);folderByPath.set(childRelative,folder);report.foldersAdded++;}visit(childAbsolute,childRelative,folder.id);continue;}if(!isFile||IGNORED_FILES.has(entry.name.toLowerCase())){report.ignoredEntries++;continue;}if(documentPaths.has(childRelative))continue;const id=entityId(),timestamp=now(),kind=extname(entry.name).toLowerCase()===".md"?"markdown":"file";this.db.prepare("INSERT INTO documents VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)").run(id,project.id,parentFolderId,entry.name,kind,childRelative,mimeFor(entry.name),timestamp,timestamp);documentPaths.add(childRelative);report.documentsAdded++;}};visit(root,"",null);}
 
   createFolder(input: CreateFolderInput) {
     this.getProject(input.projectId); const parent = input.parentFolderId ? this.getFolder(input.parentFolderId) : null;
@@ -677,6 +677,56 @@ export class SqliteVaultRepository implements VaultRepository {
     });
   }
 
+  // --- v0.3.1 Project Context & Repository Analysis (read-only) ---
+  // Deterministic, local-first evidence discovery + Project Truth readiness + a targeted
+  // context package. Read-only: no writes, no model call, no proposal, no canonical promotion.
+  analyzeProjectContext(projectId: string): ProjectContextAnalysis {
+    this.getProject(projectId);
+    const root = this.projectFilesPath(projectId);
+    const { files, truncated } = this.discoverProjectEvidence(root);
+    const inventory = classifyEvidence({ projectId, files, truncated });
+    const readiness = detectProjectTruthReadiness(inventory);
+    const contents = selectContextEvidence(inventory).map(relativePath => ({ relativePath, content: this.readBoundedContent(root, relativePath) }));
+    const contextPackage = buildProjectContextPackage({ projectId, inventory, readiness, contents });
+    return { projectId, ruleVersion: PROJECT_CONTEXT_RULE_VERSION, inventory, readiness, contextPackage, generatedAt: now() };
+  }
+  // Read-only walk of a project's managed files. Reuses the reconciler's ignore-lists and
+  // symlink safety; honors the shared visited cap by stopping early (truncated) rather than throwing.
+  private discoverProjectEvidence(root: string): { files: RawEvidenceFile[]; truncated: boolean } {
+    const files: RawEvidenceFile[] = [];
+    let visited = 0, truncated = false;
+    const visit = (absolute: string, relativePath: string): void => {
+      if (truncated) return;
+      for (const entry of readdirSync(absolute, { withFileTypes: true })) {
+        if (++visited > MAX_VISITED_ENTRIES) { truncated = true; return; }
+        const childAbsolute = join(absolute, entry.name);
+        const childRelative = relativePath ? `${relativePath}/${entry.name}` : entry.name;
+        const linkedKind = entry.isSymbolicLink() ? safeLinkedKind(childAbsolute, root) : null;
+        if (entry.isSymbolicLink() && !linkedKind) continue; // symlink escaping the project boundary
+        if (entry.isDirectory() || linkedKind === "directory") {
+          if (IGNORED_DIRECTORIES.has(entry.name.toLowerCase())) continue;
+          visit(childAbsolute, childRelative);
+          if (truncated) return;
+          continue;
+        }
+        if (!(entry.isFile() || linkedKind === "file") || IGNORED_FILES.has(entry.name.toLowerCase())) continue;
+        let sizeBytes = 0; try { sizeBytes = statSync(childAbsolute).size; } catch { continue; }
+        files.push({ relativePath: childRelative, sizeBytes });
+      }
+    };
+    if (existsSync(root)) visit(root, "");
+    return { files, truncated };
+  }
+  // Bounded, path-safe read for context items. Skips large/binary-ish files; truncates to the shared cap.
+  private readBoundedContent(root: string, relativePath: string): string {
+    try {
+      const absolute = safeResolve(root, ...relativePath.split("/"));
+      if (statSync(absolute).size > 2_000_000) return "";
+      const text = readFileSync(absolute, "utf8");
+      return text.length > PROJECT_CONTEXT_LIMITS.maxChars ? text.slice(0, PROJECT_CONTEXT_LIMITS.maxChars) : text;
+    } catch { return ""; }
+  }
+
   snapshot(): VaultSnapshot {
     const projects = this.listProjects({ status: "active" });
     const projectIds = new Set(projects.map(project => project.id));
@@ -788,5 +838,8 @@ const SEARCHABLE_EXTENSIONS=new Set([".md",".txt",".json",".csv",".tsv",".js",".
 const mimeFor=(name:string)=>({".pdf":"application/pdf",".png":"image/png",".jpg":"image/jpeg",".jpeg":"image/jpeg",".gif":"image/gif",".svg":"image/svg+xml",".txt":"text/plain",".json":"application/json",".csv":"text/csv",".md":"text/markdown"}[extname(name).toLowerCase()]??"application/octet-stream");
 const IGNORED_DIRECTORIES=new Set([".git",".svn",".hg","node_modules",".pnpm-store","dist","build","out","target","coverage",".next",".nuxt",".cache",".turbo",".parcel-cache","__pycache__",".venv","venv"]);
 const IGNORED_FILES=new Set(["vault.db","vault.db-shm","vault.db-wal","thumbs.db",".ds_store"]);
+// Shared defensive cap on entries visited per project. Reconcile throws past it;
+// read-only context discovery degrades gracefully (truncated: true) instead.
+const MAX_VISITED_ENTRIES=25000;
 
 export const __testing = { safeResolve, atomicWrite, MIGRATIONS };
